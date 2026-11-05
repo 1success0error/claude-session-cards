@@ -64,15 +64,7 @@ function resumeCommand(s) {
 
 async function copyText(text) {
   if (host) return host.copy(text);
-  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
-  // 手机通过 http 访问 Tailscale 地址时不是安全上下文，退回旧接口
-  const area = el('textarea');
-  area.value = text;
-  document.body.append(area);
-  area.select();
-  const ok = document.execCommand('copy');
-  area.remove();
-  if (!ok) throw new Error('copy failed');
+  return navigator.clipboard.writeText(text);
 }
 
 // 桌面窗口不用原生 title：点击穿透后窗口收不到鼠标事件，原生提示框会一直留在屏幕上
@@ -249,7 +241,7 @@ cardsEl.addEventListener('click', (e) => {
   const hit = sessionOfEvent(e);
   if (!hit) return;
   if (host) acknowledge(hit.card, hit.s);
-  else copyResume(hit.card, hit.s); // 手机和网页无法操作电脑上的窗口
+  else copyResume(hit.card, hit.s); // 浏览器页面没有跳转窗口的能力
 });
 cardsEl.addEventListener('dblclick', (e) => {
   const hit = sessionOfEvent(e);
@@ -500,10 +492,7 @@ if (host) {
   });
 }
 
-// 历史只对本机开放，手机上不显示入口
-const historyButton = $('history');
-historyButton.hidden = !host && !['127.0.0.1', 'localhost'].includes(location.hostname);
-historyButton.addEventListener('click', (e) => {
+$('history').addEventListener('click', (e) => {
   e.stopPropagation();
   if (host) host.openHistory();
   else location.href = '/history.html';

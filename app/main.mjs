@@ -18,7 +18,6 @@ const DEFAULT_OFFSET_Y = 80;
 const TITLE_SCAN_BYTES = 4 * 1024 * 1024;
 const POINTER_POLL_MS = 200;
 const AUTOSTART_NAME = 'claude-session-cards';
-const TAILSCALE = process.env.CLAUDE_SESSION_CARDS_TAILSCALE === '1' || process.argv.includes('--tailscale');
 const HISTORY_SIZE = { width: 760, height: 680 };
 const THEMES = new Set(['system', 'dark', 'light']);
 const OPACITIES = new Set(['opaque', 'standard', 'translucent']);
@@ -34,7 +33,7 @@ let pinned = true;
 let appearance = { theme: 'system', opacity: 'standard' };
 let historyWin = null;
 
-/** 主题交给 nativeTheme：所有窗口的 prefers-color-scheme 都跟着变，手机网页不受影响。 */
+/** 主题交给 nativeTheme：所有窗口的 prefers-color-scheme 都跟着变。 */
 function setAppearance({ theme, opacity }) {
   if (THEMES.has(theme)) appearance.theme = theme;
   if (OPACITIES.has(opacity)) appearance.opacity = opacity;
@@ -204,20 +203,18 @@ function openHistoryWindow() {
   historyWin.loadURL(`http://127.0.0.1:${server.port}/history.html`);
 }
 
-// 开机启动时没有命令行环境，所以把应用目录和 Tailscale 设置都写进启动命令
-const autostartArgs = (tailscale) => [app.getAppPath(), ...(tailscale ? ['--tailscale'] : [])];
-const loginOptions = (tailscale) => ({ path: process.execPath, args: autostartArgs(tailscale), name: AUTOSTART_NAME });
+const loginOptions = () => ({ path: process.execPath, args: [app.getAppPath()], name: AUTOSTART_NAME });
 
 /** 只支持 Windows；其他平台返回 null，不显示这个选项。 */
 function isAutostartEnabled() {
   if (process.platform !== 'win32') return null;
   // openAtLogin 要启动命令完全一致才为 true，对不上引号和参数，所以按启动项名称判断
-  return app.getLoginItemSettings(loginOptions(TAILSCALE)).launchItems.some((item) => item.name === AUTOSTART_NAME);
+  return app.getLoginItemSettings(loginOptions()).launchItems.some((item) => item.name === AUTOSTART_NAME);
 }
 
 function setAutostart(on) {
   if (process.platform !== 'win32') return;
-  app.setLoginItemSettings({ ...loginOptions(TAILSCALE), openAtLogin: on });
+  app.setLoginItemSettings({ ...loginOptions(), openAtLogin: on });
   updateTray();
 }
 
@@ -360,8 +357,7 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.dock?.hide();
   app.whenReady().then(async () => {
-    server = startServer({ tailscale: TAILSCALE, onShutdown: () => app.quit() });
-    server.onChange(updateTray);
+    server = startServer({ onShutdown: () => app.quit() });
     await server.ready;
     setupIpc();
     createWindow();

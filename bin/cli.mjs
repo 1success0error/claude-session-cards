@@ -15,10 +15,8 @@ const USAGE = `用法: ${APP_ID} <命令>
 
   install [--dsh-pet]     把 hook 写入 Claude Code 配置（--dsh-pet 同时联动 DSH 桌宠）
   uninstall [--purge]     移除 hook（--purge 同时删除本地状态数据）
-  start [--web] [--tailscale]
-                          启动置顶卡片窗口
+  start [--web]           启动置顶卡片窗口
                             --web        不开窗口，只提供网页 ${BASE}/
-                            --tailscale  同时监听 Tailscale 地址（只读，但 tailnet 内设备可见）
   stop                    退出
   status                  查看运行状态和当前会话
 `;
@@ -84,7 +82,6 @@ async function start(flags) {
   }
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  if (flags.has('--tailscale')) env.CLAUDE_SESSION_CARDS_TAILSCALE = '1';
 
   const binary = flags.has('--web') ? null : electronBinary();
   if (binary) launch(binary, [ROOT], env);
@@ -98,11 +95,6 @@ async function start(flags) {
   while (Date.now() < deadline && !(up = await health())) await new Promise((r) => setTimeout(r, 200));
   if (!up || up.foreign) throw new Error(`启动失败，日志见 ${join(dataDir(), 'app.log')}`);
   console.log(binary ? `已启动置顶卡片，网页: ${BASE}/` : `已启动网页模式: ${BASE}/`);
-  if (flags.has('--tailscale')) {
-    await new Promise((r) => setTimeout(r, 1500));
-    const after = await health();
-    console.log(after?.tailscaleUrl ? `Tailscale 地址: ${after.tailscaleUrl}` : '暂未检测到 Tailscale，连接后会自动开放。');
-  }
   if (!isInstalled(claudeDir())) console.log(`提示: 还没安装 hook，请运行 ${APP_ID} install`);
 }
 
@@ -120,7 +112,6 @@ async function status() {
   if (!running) return console.log('服务: 未运行');
   if (running.foreign) return console.log(`服务: 端口 ${port()} 被其他程序占用`);
   console.log(`服务: 运行中 ${BASE}/`);
-  if (running.tailscaleUrl) console.log(`Tailscale: ${running.tailscaleUrl}`);
   const { sessions } = await (await fetch(`${BASE}/api/sessions`)).json();
   for (const s of sessions) console.log(`  ${s.id.slice(0, 8)}  ${s.state.padEnd(8)}  ${s.project}`);
 }
