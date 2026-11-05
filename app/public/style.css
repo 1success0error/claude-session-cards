@@ -1,0 +1,89 @@
+:root {
+  --bg: #17181c;
+  --card: rgba(30, 32, 38, 0.94);
+  --line: rgba(255, 255, 255, 0.12);
+  --text: #f1f2f4;
+  --muted: #a4a9b3;
+  --waiting: #f5b83d;
+  --error: #f26d6d;
+  --working: #4cc38a;
+  --thinking: #6ea8fe;
+  --stale: #c08a5a;
+  --done: #8b919c;
+  --idle: #6a707b;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; color: var(--text); font: 13px/1.4 "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif; }
+body { background: var(--bg); padding: 16px; }
+#root { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 6px; }
+
+#bar {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 30px; padding: 4px 6px 4px 10px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  user-select: none;
+}
+#counts { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px 10px; font-weight: 600; }
+.count { display: inline-flex; align-items: center; gap: 4px; }
+#conn { color: var(--error); font-size: 12px; }
+button { font: inherit; color: var(--muted); background: none; border: 0; border-radius: 5px; cursor: pointer; }
+button:hover { color: var(--text); background: rgba(255, 255, 255, 0.1); }
+button:focus-visible { outline: 2px solid var(--thinking); }
+#toggle { width: 24px; height: 22px; padding: 0; }
+
+#cards { display: flex; flex-direction: column; gap: 6px; }
+body.collapsed #cards { display: none; }
+.empty { padding: 14px; color: var(--muted); text-align: center; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+
+.card {
+  position: relative; padding: 8px 10px; cursor: pointer;
+  background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px;
+}
+.card:hover { border-color: var(--accent); }
+.card.waiting { --accent: var(--waiting); }
+.card.error { --accent: var(--error); }
+.card.working { --accent: var(--working); }
+.card.thinking { --accent: var(--thinking); }
+.card.stale { --accent: var(--stale); }
+.card.done { --accent: var(--done); }
+.card.idle { --accent: var(--idle); }
+
+.head { display: flex; align-items: center; gap: 8px; }
+.project { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.short { color: var(--muted); font-weight: 400; font-size: 11px; }
+.status { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 12px; color: var(--accent); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent, currentColor); flex: none; }
+.card.working .dot, .card.thinking .dot { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } }
+
+.line { margin-top: 2px; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.task { color: var(--text); }
+.tool { color: var(--text); font-size: 12px; }
+.prev { color: var(--muted); font-size: 11px; -webkit-line-clamp: 1; }
+.foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.progress { flex: 1; height: 4px; overflow: hidden; background: rgba(255, 255, 255, 0.12); border-radius: 2px; }
+.progress i { display: block; height: 100%; background: var(--accent); }
+.spacer { flex: 1; }
+.dismiss { position: absolute; right: 4px; bottom: 3px; display: none; padding: 0 5px; font-size: 13px; }
+.card:hover .dismiss { display: block; }
+.card[data-notice]::after {
+  content: attr(data-notice); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: 0 10px; text-align: center; color: var(--text); font-weight: 600; background: rgba(23, 24, 28, 0.92); border-radius: 7px;
+}
+
+#menu { position: fixed; z-index: 10; display: flex; flex-direction: column; min-width: 150px; padding: 4px; background: #24262c; border: 1px solid var(--line); border-radius: 8px; }
+#menu[hidden] { display: none; }
+#menu button { padding: 5px 10px; color: var(--text); text-align: left; white-space: nowrap; }
+#menu button.separated { margin-top: 4px; padding-top: 7px; border-top: 1px solid var(--line); border-radius: 0 0 5px 5px; }
+
+/* 桌面置顶窗口：背景全透明，只显示卡片本身 */
+html.overlay, html.overlay body { background: transparent; overflow: hidden; }
+html.overlay body { padding: 0; }
+html.overlay #root { max-width: none; max-height: 100vh; }
+html.overlay #bar { flex: none; cursor: grab; }
+html.overlay #bar.dragging { cursor: grabbing; }
+html.overlay #cards { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+html.overlay .card { flex: none; }

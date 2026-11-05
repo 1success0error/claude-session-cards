@@ -1,0 +1,232 @@
+// 桌面置顶卡片窗口：透明、不占任务栏、不抢焦点、卡片以外点击穿透。
+// 只在创建窗口和手动「显示」时置顶，不做定时重新置顶：那样会打断全屏游戏和截图。
+import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, screen, Tray } from 'electron';
+import { execFile } from 'node:child_process';
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { dataDir } from '../lib/paths.mjs';
+import { startServer } from '../lib/server.mjs';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const WINDOW_FILE = join(dataDir(), 'window.json');
+const WIDTH = 320;
+const MARGIN = 16;
+const DEFAULT_OFFSET_Y = 80;
+const TITLE_SCAN_BYTES = 4 * 1024 * 1024;
+// Electron 的 forward 选项只支持 Windows 和 macOS：Linux 上穿透后就再也收不到鼠标，所以不穿透
+const CLICK_THROUGH = process.platform !== 'linux';
+
+let win = null;
+let tray = null;
+let server = null;
+let dragOrigin = null;
+let pinned = true;
+
+function loadPosition() {
+  try {
+    const { x, y, pinned: savedPinned } = JSON.parse(readFileSync(WINDOW_FILE, 'utf8'));
+    if (typeof savedPinned === 'boolean') pinned = savedPinned;
+    if (Number.isInteger(x) && Number.isInteger(y)) {
+      // 显示器可能已拔掉：位置不在任何屏幕内就回到默认
+      const area = screen.getDisplayNearestPoint({ x, y }).workArea;
+      if (x >= area.x - WIDTH / 2 && x < area.x + area.width - WIDTH / 2 && y >= area.y && y < area.y + area.height - 40) return { x, y };
+    }
+  } catch {}
+  const area = screen.getPrimaryDisplay().workArea;
+  return { x: area.x + MARGIN, y: area.y + DEFAULT_OFFSET_Y };
+}
+
+function savePosition() {
+  if (!win || win.isDestroyed()) return;
+  const { x, y } = win.getBounds();
+  try {
+    mkdirSync(dirname(WINDOW_FILE), { recursive: true });
+    writeFileSync(WINDOW_FILE, JSON.stringify({ x, y, pinned }));
+  } catch {}
+}
+
+function setClickThrough(on) {
+  if (CLICK_THROUGH) win.setIgnoreMouseEvents(on, { forward: true });
+}
+
+function pinOnTop() {
+  win.setAlwaysOnTop(pinned, 'screen-saver');
+  if (process.platform === 'darwin') win.setVisibleOnAllWorkspaces(pinned, { visibleOnFullScreen: pinned });
+}
+
+function createWindow() {
+  const { x, y } = loadPosition();
+  win = new BrowserWindow({
+    x, y, width: WIDTH, height: 40,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: pinned,
+    focusable: false,
+    show: false,
+    webPreferences: { preload: join(HERE, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
+  });
+  pinOnTop();
+  setClickThrough(true);
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.once('ready-to-show', () => win.showInactive());
+  win.on('closed', () => { win = null; });
+  win.loadURL(`http://127.0.0.1:${server.port}/`);
+}
+
+/** 从 transcript 末尾取会话标题（手动命名优先），用来匹配 Windows Terminal 的标签。 */
+function sessionTitle(path) {
+  if (typeof path !== 'string' || !path.endsWith('.jsonl')) return null;
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+    const size = fstatSync(fd).size;
+    const length = Math.min(size, TITLE_SCAN_BYTES);
+    const buf = Buffer.alloc(length);
+    readSync(fd, buf, 0, length, size - length);
+    const text = buf.toString('utf8');
+    for (const key of ['customTitle', 'aiTitle']) {
+      const matches = [...text.matchAll(new RegExp(`"${key}":("(?:[^"\\\\]|\\\\.)*")`, 'g'))];
+      if (matches.length) return JSON.parse(matches.at(-1)[1]);
+    }
+  } catch {
+    // 标题只影响能否选中标签页，读不到就只切窗口
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+  return null;
+}
+
+/** 返回 'focused' | 'no-window' | 'refused' | 'unsupported'。 */
+function focusSession(id) {
+  const session = server.getSession(id);
+  if (process.platform !== 'win32') return Promise.resolve('unsupported');
+  if (!session?.chain?.length) return Promise.resolve('no-window');
+  const env = {
+    ...process.env,
+    CARDS_CHAIN: session.chain.map((p) => `${p.pid}:${p.name}`).join(','),
+    CARDS_TITLE: sessionTitle(session.transcript) ?? '',
+  };
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(HERE, 'focus-window.ps1')], { env, timeout: 10_000, windowsHide: true }, (err) => {
+      if (!err) resolve('focused');
+      else resolve(err.code === 3 ? 'refused' : 'no-window');
+    });
+  });
+}
+
+function setPinned(on) {
+  pinned = on;
+  pinOnTop();
+  if (on) win.moveTop();
+  savePosition();
+  updateTray();
+}
+
+function pinnedMenuItem() {
+  return { label: '窗口置顶', type: 'checkbox', checked: pinned, click: (item) => setPinned(item.checked) };
+}
+
+function setupIpc() {
+  const fromOurWindow = (e) => win && e.sender === win.webContents;
+  ipcMain.handle('get-pinned', () => pinned);
+  ipcMain.on('set-pinned', (e, on) => {
+    if (fromOurWindow(e)) setPinned(on === true);
+  });
+  ipcMain.handle('focus-session', (e, id) => (fromOurWindow(e) ? focusSession(String(id)) : 'no-window'));
+  ipcMain.on('interactive', (e, on) => {
+    if (fromOurWindow(e)) setClickThrough(!on);
+  });
+  ipcMain.on('resize', (e, height) => {
+    if (!fromOurWindow(e) || !Number.isFinite(height)) return;
+    const b = win.getBounds();
+    const area = screen.getDisplayMatching(b).workArea;
+    const max = Math.max(60, area.y + area.height - b.y - MARGIN);
+    win.setBounds({ x: b.x, y: b.y, width: WIDTH, height: Math.min(max, Math.max(30, Math.ceil(height))) });
+  });
+  ipcMain.on('drag-start', (e) => {
+    if (fromOurWindow(e)) dragOrigin = win.getBounds();
+  });
+  ipcMain.on('drag-move', (e, dx, dy) => {
+    if (!fromOurWindow(e) || !dragOrigin || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
+    win.setBounds({ ...dragOrigin, x: Math.round(dragOrigin.x + dx), y: Math.round(dragOrigin.y + dy) });
+  });
+  ipcMain.on('drag-end', (e) => {
+    if (!fromOurWindow(e)) return;
+    dragOrigin = null;
+    savePosition();
+  });
+  ipcMain.handle('copy', (e, text) => {
+    if (fromOurWindow(e)) clipboard.writeText(text);
+  });
+}
+
+function trayIcon(color) {
+  const size = 16;
+  const buf = Buffer.alloc(size * size * 4);
+  const c = (size - 1) / 2;
+  for (let py = 0; py < size; py += 1) {
+    for (let px = 0; px < size; px += 1) {
+      if (Math.hypot(px - c, py - c) > 6.5) continue;
+      const i = (py * size + px) * 4;
+      buf[i] = color[2]; buf[i + 1] = color[1]; buf[i + 2] = color[0]; buf[i + 3] = 255; // BGRA
+    }
+  }
+  return nativeImage.createFromBitmap(buf, { width: size, height: size });
+}
+
+function updateTray() {
+  if (!tray) return;
+  const showing = Boolean(win?.isVisible());
+  const phoneUrl = server.info.tailscaleUrl;
+  const items = [
+    {
+      label: showing ? '隐藏卡片' : '显示卡片',
+      click: () => {
+        if (win?.isVisible()) win.hide();
+        else if (win) {
+          win.showInactive();
+          pinOnTop();
+          win.moveTop();
+        }
+        updateTray();
+      },
+    },
+    pinnedMenuItem(),
+  ];
+  if (phoneUrl) items.push({ label: '复制手机访问地址', click: () => clipboard.writeText(phoneUrl) });
+  items.push({ type: 'separator' }, { label: '退出', click: () => app.quit() });
+  tray.setContextMenu(Menu.buildFromTemplate(items));
+}
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.dock?.hide();
+  app.whenReady().then(async () => {
+    server = startServer({ tailscale: process.env.CLAUDE_SESSION_CARDS_TAILSCALE === '1', onShutdown: () => app.quit() });
+    server.onChange(updateTray);
+    await server.ready;
+    setupIpc();
+    createWindow();
+    tray = new Tray(trayIcon([76, 195, 138]));
+    tray.setToolTip('Claude 会话卡片');
+    updateTray();
+  }).catch((err) => {
+    console.error('[claude-session-cards] start failed', err);
+    app.exit(1);
+  });
+  app.on('window-all-closed', (e) => e.preventDefault());
+  app.on('before-quit', () => {
+    savePosition();
+    server?.close();
+  });
+}

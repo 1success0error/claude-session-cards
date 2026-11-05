@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude 会话</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="root">
+    <header id="bar">
+      <span id="counts"></span>
+      <span id="conn" hidden>连接已断开</span>
+      <button id="toggle" type="button" title="收起 / 展开" aria-label="收起或展开卡片"></button>
+    </header>
+    <section id="cards" aria-live="polite"></section>
+  </main>
+  <div id="menu" role="menu" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

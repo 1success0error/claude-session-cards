@@ -1,0 +1,5 @@
+node_modules/
+*.tgz
+*.log
+state.json
+window.json
