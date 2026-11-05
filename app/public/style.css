@@ -18,6 +18,7 @@
   --stale: #c08a5a;
   --done: #a4a9b3;
   --idle: #9198a3;
+  --attention: #c9a2ff;
 }
 
 @media (prefers-color-scheme: light) {
@@ -39,6 +40,7 @@
     --stale: #8f5a24;
     --done: #5f6670;
     --idle: #656c76;
+    --attention: #7a3fd6;
   }
 }
 
@@ -84,14 +86,31 @@ body.collapsed #cards { display: none; }
 .card.done { --accent: var(--done); }
 .card.idle { --accent: var(--idle); }
 
+/* 一轮结束的提示：点一下卡片才消失 */
+.card.done.attention, #bar.attention { --accent: var(--attention); }
+.card.attention, #bar.attention {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--card));
+  animation: attention 1.2s ease-in-out infinite;
+}
+.card.attention .status { font-weight: 700; }
+@keyframes attention {
+  50% { box-shadow: inset 0 0 0 2px var(--accent); background: color-mix(in srgb, var(--accent) 34%, var(--card)); }
+}
+
 .head { display: flex; align-items: center; gap: 8px; }
 .project { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sub { margin-top: 1px; color: var(--muted); font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.title-input { flex: 1; min-width: 0; padding: 1px 4px; font: inherit; font-weight: 600; color: var(--text); background: var(--bg); border: 1px solid var(--thinking); border-radius: 4px; }
 .short { color: var(--muted); font-weight: 400; font-size: 11px; }
 .status { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 12px; color: var(--accent); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent, currentColor); flex: none; }
 .card.working .dot, .card.thinking .dot { animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.35; } }
-@media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) {
+  .dot { animation: none !important; }
+  .card.attention, #bar.attention { animation: none; box-shadow: inset 0 0 0 2px var(--accent); }
+}
 
 .line { margin-top: 2px; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .task { color: var(--text); }

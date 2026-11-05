@@ -122,6 +122,16 @@ function sessionTitle(path) {
   return null;
 }
 
+/** Windows 的前台锁可能让 win.focus() 无效，所以用和跳转窗口相同的办法切到前台。 */
+function forceForeground() {
+  if (process.platform !== 'win32') return Promise.resolve();
+  const handle = win.getNativeWindowHandle();
+  const hwnd = handle.length >= 8 ? handle.readBigUInt64LE() : BigInt(handle.readUInt32LE());
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(HERE, 'focus-window.ps1')], { env: { ...process.env, CARDS_HWND: hwnd.toString(), CARDS_CHAIN: '' }, timeout: 5000, windowsHide: true }, () => resolve());
+  });
+}
+
 /** 返回 'focused' | 'no-window' | 'refused' | 'unsupported'。 */
 function focusSession(id) {
   const session = server.getSession(id);
@@ -210,6 +220,17 @@ function setupIpc() {
     if (fromOurWindow(e)) openHistoryWindow();
   });
   ipcMain.handle('resume-session', (e, id) => (fromHistory(e) ? resumeSession(String(id)) : 'not-found'));
+  // 平时不抢焦点；只有改标题时才需要键盘输入
+  ipcMain.handle('set-editing', async (e, on) => {
+    if (!fromOurWindow(e)) return;
+    win.setFocusable(on);
+    if (!on) {
+      win.blur();
+      return;
+    }
+    win.focus();
+    await forceForeground(); // isFocused() 在前台锁下仍可能返回 true，不能用来判断
+  });
   ipcMain.handle('get-appearance', () => appearance);
   ipcMain.on('set-appearance', (e, value) => {
     if (!fromOurWindow(e)) return;

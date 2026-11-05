@@ -57,6 +57,7 @@ async function main() {
     event: ev.hook_event_name,
     session_id: ev.session_id,
     cwd: ev.cwd,
+    transcript_path: ev.transcript_path,
     ts,
     prompt: ev.prompt === undefined ? undefined : clip(ev.prompt),
     tool_name: ev.tool_name,

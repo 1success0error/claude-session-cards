@@ -28,7 +28,7 @@ const contrast = (a, b) => {
 
 const BLACK = [0, 0, 0];
 const WHITE = [255, 255, 255];
-const FOREGROUNDS = ['text', 'muted', 'waiting', 'error', 'working', 'thinking', 'stale', 'done', 'idle'];
+const FOREGROUNDS = ['text', 'muted', 'waiting', 'error', 'working', 'thinking', 'stale', 'done', 'idle', 'attention'];
 const themes = tokens(css('style.css'));
 
 for (const [name, t] of Object.entries(themes)) {

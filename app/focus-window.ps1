@@ -3,6 +3,7 @@
 # Input comes from the environment so no value is ever parsed as a command line:
 #   CARDS_CHAIN  pid:name pairs from the claude process upward, comma separated
 #   CARDS_TITLE  session title, optional
+#   CARDS_HWND   window handle to focus directly, instead of searching CARDS_CHAIN
 # Exit codes: 0 focused, 2 no window found, 3 window found but Windows refused the focus change.
 $ErrorActionPreference = 'Stop'
 
@@ -15,6 +16,8 @@ Add-Type -Namespace CardsNative -Name Win32 -MemberDefinition @'
 '@
 
 $target = $null
+$hwnd = [IntPtr]::Zero
+if ($env:CARDS_HWND) { $hwnd = [IntPtr]::new([long]$env:CARDS_HWND) }
 foreach ($pair in ($env:CARDS_CHAIN -split ',')) {
     $parts = $pair -split ':', 2
     $processId = 0
@@ -26,12 +29,14 @@ foreach ($pair in ($env:CARDS_CHAIN -split ',')) {
         break
     }
 }
-if (-not $target) { exit 2 }
+if ($target) { $hwnd = $target.MainWindowHandle }
+if ($hwnd -eq [IntPtr]::Zero) { exit 2 }
 
-$hwnd = $target.MainWindowHandle
+if ($env:CARDS_HWND -and [CardsNative.Win32]::GetForegroundWindow() -eq $hwnd) { exit 0 }
+
 if ([CardsNative.Win32]::IsIconic($hwnd)) { [void][CardsNative.Win32]::ShowWindow($hwnd, 9) }
 
-if ($env:CARDS_TITLE -and $target.ProcessName -eq 'WindowsTerminal') {
+if ($env:CARDS_TITLE -and $target -and $target.ProcessName -eq 'WindowsTerminal') {
     try {
         Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
         $root = [Windows.Automation.AutomationElement]::FromHandle($hwnd)

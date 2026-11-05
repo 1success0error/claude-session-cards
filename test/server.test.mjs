@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applyEvent, pruneSessions } from '../lib/server.mjs';
+import { applyEvent, normalizeTitle, pruneSessions } from '../lib/server.mjs';
 
 const CWD = ['D:', 'project', 'shop'].join(String.fromCharCode(92));
 const fresh = () => new Map();
@@ -18,6 +18,45 @@ test('正常一轮', () => {
   assert.equal(m.get('a1').tool, null);
   applyEvent(m, e('Stop', 400));
   assert.equal(m.get('a1').state, 'done');
+});
+
+test('一轮结束时提示，新一轮或继续工作时清除', () => {
+  const m = fresh();
+  applyEvent(m, e('UserPromptSubmit', 100, { prompt: 'a' }));
+  assert.equal(m.get('a1').attention, false);
+  applyEvent(m, e('Stop', 200));
+  assert.equal(m.get('a1').attention, true);
+  applyEvent(m, e('Notification', 300, { notification_type: 'idle_prompt' }));
+  assert.equal(m.get('a1').attention, true);
+  applyEvent(m, e('UserPromptSubmit', 400, { prompt: 'b' }));
+  assert.equal(m.get('a1').attention, false);
+  applyEvent(m, e('StopFailure', 500));
+  assert.equal(m.get('a1').attention, true);
+  applyEvent(m, e('PreToolUse', 9000, { tool_name: 'Bash' }));
+  assert.equal(m.get('a1').attention, false);
+});
+
+test('Stop 后迟到的工具事件不会清除提示', () => {
+  const m = fresh();
+  applyEvent(m, e('Stop', 1000));
+  applyEvent(m, e('PreToolUse', 1500, { tool_name: 'Bash' }));
+  assert.equal(m.get('a1').attention, true);
+});
+
+test('只记录 jsonl 的 transcript 路径', () => {
+  const m = fresh();
+  applyEvent(m, e('SessionStart', 1, { transcript_path: 'C:/x/a.jsonl' }));
+  assert.equal(m.get('a1').transcript, 'C:/x/a.jsonl');
+  applyEvent(m, e('Stop', 2, { transcript_path: 'C:/secret.txt' }));
+  assert.equal(m.get('a1').transcript, 'C:/x/a.jsonl');
+});
+
+test('标题规范化', () => {
+  assert.equal(normalizeTitle('  新 \n 标题 '), '新 标题');
+  assert.equal(normalizeTitle('   '), null);
+  assert.equal(normalizeTitle(null), null);
+  assert.equal(Array.from(normalizeTitle('字'.repeat(200))).length, 80);
+  assert.throws(() => normalizeTitle(42));
 });
 
 test('记录上一步，新一轮清空', () => {

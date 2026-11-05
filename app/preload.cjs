@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('overlay', {
   focusSession: (id) => ipcRenderer.invoke('focus-session', String(id)),
   openHistory: () => ipcRenderer.send('open-history'),
   resumeSession: (id) => ipcRenderer.invoke('resume-session', String(id)),
+  setEditing: (on) => ipcRenderer.invoke('set-editing', on === true),
   getAppearance: () => ipcRenderer.invoke('get-appearance'),
   setAppearance: (value) => ipcRenderer.send('set-appearance', value),
   getPinned: () => ipcRenderer.invoke('get-pinned'),

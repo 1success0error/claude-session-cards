@@ -3,6 +3,7 @@
 const host = window.overlay; // 只有桌面置顶窗口才有（preload 注入）
 const STALE_MS = 30 * 60 * 1000; // 进行中却这么久没事件：可能被强杀或中断
 const DONE_VISIBLE_MS = 2 * 60 * 60 * 1000;
+const TITLE_MAX = 80;
 const LABEL = { waiting: '等你确认', error: '出错', working: '执行中', thinking: '思考中', stale: '可能已中断', done: '已完成', idle: '空闲' };
 const ORDER = ['waiting', 'error', 'working', 'thinking', 'stale', 'done', 'idle'];
 
@@ -11,7 +12,8 @@ const cardsEl = $('cards');
 let sessions = [];
 let clockOffset = 0;
 let hostPlatform = 'win32';
-let lastSignature = null;
+let editingId = null;
+const cardNodes = new Map(); // 会话 ID -> { signature, node }
 
 if (host) document.documentElement.classList.add('overlay');
 
@@ -40,11 +42,14 @@ function timeText(s, state) {
   return `已运行 ${duration(now() - (s.turnStartedAt ?? s.startedAt))}`;
 }
 
+// 未确认的完成提示排在进行中的卡片前面
+const rank = ({ s, state }) => (state === 'done' && s.attention ? 1.5 : ORDER.indexOf(state));
+
 function visible() {
   return sessions
     .map((s) => ({ s, state: viewState(s) }))
-    .filter(({ s, state }) => !((state === 'done' || state === 'idle') && now() - s.updatedAt > DONE_VISIBLE_MS))
-    .sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || b.s.updatedAt - a.s.updatedAt);
+    .filter(({ s, state }) => s.attention || !((state === 'done' || state === 'idle') && now() - s.updatedAt > DONE_VISIBLE_MS))
+    .sort((a, b) => rank(a) - rank(b) || b.s.updatedAt - a.s.updatedAt);
 }
 
 // Windows 按 PowerShell 写（5.1 不支持 &&）；其他平台按 POSIX shell 引用路径
@@ -68,17 +73,91 @@ async function copyText(text) {
   if (!ok) throw new Error('copy failed');
 }
 
+function notice(card, text, ms = 2000) {
+  card.dataset.notice = text;
+  clearTimeout(card.noticeTimer);
+  if (ms) card.noticeTimer = setTimeout(() => delete card.dataset.notice, ms);
+}
+
+async function copyResume(card, s) {
+  try {
+    await copyText(resumeCommand(s));
+    notice(card, '已复制恢复命令', 1200);
+  } catch {
+    window.prompt('复制恢复命令', resumeCommand(s));
+  }
+}
+
+async function jumpToWindow(card, s) {
+  notice(card, '正在跳转…', 0);
+  const result = await host.focusSession(s.id);
+  if (result === 'focused') delete card.dataset.notice;
+  else if (result === 'unsupported') copyResume(card, s);
+  else if (result === 'refused') notice(card, '系统拦截了窗口切换，请手动切换');
+  else notice(card, '找不到对应窗口，可右键复制恢复命令');
+}
+
+function acknowledge(card, s) {
+  if (!s.attention) return;
+  s.attention = false;
+  card.classList.remove('attention');
+  updateBarAttention();
+  fetch(`/api/sessions/${encodeURIComponent(s.id)}/ack`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+}
+
+function startEditing(card, s) {
+  editingId = s.id;
+  const input = el('input', 'title-input');
+  input.value = s.title ?? '';
+  input.placeholder = s.project;
+  input.maxLength = TITLE_MAX;
+  input.setAttribute('aria-label', '会话标题');
+  card.querySelector('.project').replaceWith(input);
+  reportSize();
+
+  let finished = false;
+  const finish = async (save) => {
+    if (finished) return;
+    finished = true;
+    editingId = null;
+    host.setEditing(false);
+    cardNodes.delete(s.id); // 下一次渲染重建，换回普通标题
+    if (save && input.value.trim() !== (s.title ?? '')) {
+      s.title = input.value.trim() || null;
+      await fetch(`/api/sessions/${encodeURIComponent(s.id)}/title`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: input.value }),
+      });
+    }
+    render();
+  };
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+  host.setEditing(true).then(() => {
+    input.focus();
+    input.select();
+  });
+}
+
 function buildCard({ s, state }) {
   const card = el('article', `card ${state}`);
-  card.title = [s.cwd, s.task, s.tool, s.prevTool && `上一步：${s.prevTool}`, host ? '左键跳转到窗口，右键更多操作' : '点击复制恢复命令'].filter(Boolean).join('\n');
+  card.dataset.id = s.id;
+  const hint = host ? '单击确认完成提示，双击跳转到窗口，右键更多操作' : '点击复制恢复命令';
+  card.title = [s.title, s.cwd, s.task, s.tool, s.prevTool && `上一步：${s.prevTool}`, hint].filter(Boolean).join('\n');
 
   const head = el('div', 'head');
-  const project = el('div', 'project', s.project);
-  project.append(' ', el('span', 'short', s.id.slice(0, 4)));
+  const heading = el('div', 'project', s.title ?? s.project);
+  if (!s.title) heading.append(' ', el('span', 'short', s.id.slice(0, 4)));
   const status = el('span', 'status');
   status.append(el('span', 'dot'), LABEL[state] ?? state);
-  head.append(project, status);
+  head.append(heading, status);
   card.append(head);
+  if (s.title) card.append(el('div', 'sub', `${s.project} · ${s.id.slice(0, 4)}`));
 
   if (s.task) card.append(el('div', 'line task', s.task));
   if (s.tool) card.append(el('div', 'line tool', s.tool));
@@ -95,44 +174,20 @@ function buildCard({ s, state }) {
   } else {
     foot.append(el('span', 'spacer'));
   }
-  const time = el('span', 'time', timeText(s, state));
-  time.dataset.id = s.id;
-  foot.append(time);
+  foot.append(el('span', 'time', timeText(s, state)));
   card.append(foot);
 
-  const notice = (text, ms = 2000) => {
-    card.dataset.notice = text;
-    clearTimeout(card.noticeTimer);
-    if (ms) card.noticeTimer = setTimeout(() => delete card.dataset.notice, ms);
-  };
-  const copyResume = async () => {
-    try {
-      await copyText(resumeCommand(s));
-      notice('已复制恢复命令', 1200);
-    } catch {
-      window.prompt('复制恢复命令', resumeCommand(s));
-    }
-  };
-
-  card.addEventListener('click', async () => {
-    if (!host) return copyResume(); // 手机和网页无法操作电脑上的窗口
-    notice('正在跳转…', 0);
-    const result = await host.focusSession(s.id);
-    if (result === 'focused') delete card.dataset.notice;
-    else if (result === 'unsupported') copyResume();
-    else if (result === 'refused') notice('系统拦截了窗口切换，请手动切换');
-    else notice('找不到对应窗口，可右键复制恢复命令');
-  });
   if (host) {
     card.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
       const copy = (text, label) => async () => {
         await host.copy(text);
-        notice(label, 1200);
+        notice(card, label, 1200);
       };
       openMenu(e, [
-        { label: '跳转到窗口', action: () => card.click() },
+        { label: '修改标题', action: () => startEditing(card, s) },
+        { label: '跳转到窗口', action: () => jumpToWindow(card, s) },
         { label: '复制恢复命令', action: copy(resumeCommand(s), '已复制恢复命令') },
         { label: '复制会话 ID', action: copy(s.id, '已复制会话 ID') },
         { label: '移除这张卡片', action: () => fetch(`/api/sessions/${encodeURIComponent(s.id)}`, { method: 'DELETE' }) },
@@ -151,6 +206,61 @@ function buildCard({ s, state }) {
   return card;
 }
 
+// 点击放在容器上：两次点击之间卡片可能被重建，绑在卡片上双击会失效
+function sessionOfEvent(e) {
+  if (e.target.closest('input, button')) return null;
+  const card = e.target.closest('.card');
+  const s = card && sessions.find((x) => x.id === card.dataset.id);
+  return s ? { card, s } : null;
+}
+cardsEl.addEventListener('click', (e) => {
+  const hit = sessionOfEvent(e);
+  if (!hit) return;
+  if (host) acknowledge(hit.card, hit.s);
+  else copyResume(hit.card, hit.s); // 手机和网页无法操作电脑上的窗口
+});
+cardsEl.addEventListener('dblclick', (e) => {
+  const hit = sessionOfEvent(e);
+  if (hit && host) jumpToWindow(hit.card, hit.s);
+});
+
+function updateBarAttention() {
+  const collapsed = document.body.classList.contains('collapsed');
+  $('bar').classList.toggle('attention', collapsed && sessions.some((s) => s.attention));
+}
+
+/** 只更新变化的卡片：整体重建会打断进行中的点击、悬停和标题编辑。 */
+function renderCards(items) {
+  if (!items.length) {
+    cardNodes.clear();
+    cardsEl.replaceChildren(el('div', 'empty', '还没有会话，新开的 Claude Code 会话会出现在这里'));
+    return;
+  }
+  const nodes = items.map((item) => {
+    const { s, state } = item;
+    const signature = JSON.stringify([state, s.title, s.project, s.task, s.tool, s.prevTool, s.todos, s.cwd]);
+    let entry = cardNodes.get(s.id);
+    if (!entry || (entry.signature !== signature && editingId !== s.id)) {
+      entry = { signature, node: buildCard(item) };
+      cardNodes.set(s.id, entry);
+    }
+    entry.node.classList.toggle('attention', Boolean(s.attention));
+    entry.node.querySelector('.time').textContent = timeText(s, state);
+    return entry.node;
+  });
+  const keep = new Set(items.map((item) => item.s.id));
+  for (const id of cardNodes.keys()) if (!keep.has(id) && id !== editingId) cardNodes.delete(id);
+  if (editingId) {
+    // 移动 DOM 节点会让输入框失去焦点，把正在改的标题提交掉：编辑期间不调整顺序
+    for (const node of nodes) if (!node.isConnected) cardsEl.append(node);
+    return;
+  }
+  nodes.forEach((node, index) => {
+    if (cardsEl.children[index] !== node) cardsEl.insertBefore(node, cardsEl.children[index] ?? null);
+  });
+  while (cardsEl.children.length > nodes.length) cardsEl.lastElementChild.remove();
+}
+
 function render() {
   const items = visible();
   const counts = $('counts');
@@ -166,18 +276,8 @@ function render() {
     counts.append(chip);
   }
   if (!items.length) counts.textContent = 'Claude 会话';
-  // 内容没变就只刷新时间：每秒重建 DOM 会丢掉正在进行的点击和悬停状态
-  const signature = JSON.stringify(items.map(({ s, state }) => [s.id, state, s.project, s.task, s.tool, s.prevTool, s.todos, s.cwd]));
-  if (signature !== lastSignature) {
-    lastSignature = signature;
-    if (items.length) cardsEl.replaceChildren(...items.map(buildCard));
-    else cardsEl.replaceChildren(el('div', 'empty', '还没有会话，新开的 Claude Code 会话会出现在这里'));
-  } else {
-    for (const { s, state } of items) {
-      const time = cardsEl.querySelector(`.time[data-id="${CSS.escape(s.id)}"]`);
-      if (time) time.textContent = timeText(s, state);
-    }
-  }
+  renderCards(items);
+  updateBarAttention();
   $('toggle').textContent = document.body.classList.contains('collapsed') ? '▾' : '▴';
   reportSize();
 }
