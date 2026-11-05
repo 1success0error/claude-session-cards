@@ -22,7 +22,6 @@ claude-session-cards start     # 首次启动会下载 Electron
 |---|---|
 | `start` | 启动置顶卡片窗口，同时提供网页 `http://127.0.0.1:47831/` |
 | `start --web` | 不开窗口，只提供网页 |
-| `start --tailscale` | 同时监听 Tailscale 地址，手机可以只读查看 |
 | `stop` / `status` | 退出 / 查看状态 |
 | `install --dsh-pet` | 额外联动 DeepSeek Harness 的 dsh-pet 桌宠 |
 | `uninstall [--purge]` | 移除 hook；`--purge` 同时删除本地数据 |
@@ -38,7 +37,8 @@ Electron 下载慢或失败时，可以设置 `ELECTRON_MIRROR` 后重试，或�
 - 右键卡片可以复制恢复命令或会话 ID、移除卡片，以及切换窗口置顶。
 - 右键卡片或状态条可以切换外观（跟随系统、深色、浅色）和卡片透明度。手机网页跟随手机的系统主题。
 - 点状态条上的“历史”查看历史会话，可以按标题、提示词或路径搜索，按项目筛选。点击后在新的 Windows Terminal 标签页恢复；会话还开着时改为切到它的窗口，其他平台改为复制恢复命令。Claude Code 默认只保留 30 天的记录（`cleanupPeriodDays`）。
-- 右键托盘图标可以隐藏、切换置顶、查看历史或退出。
+- 右键托盘图标可以隐藏、切换置顶、查看历史、开关开机自启或退出。
+- 开机自启目前只支持 Windows，默认关闭，可以在托盘或右键菜单里开启。`uninstall` 会一并清除。
 - 手机和网页只读，点卡片是复制恢复命令。
 
 ## 平台支持
@@ -53,8 +53,8 @@ Electron 下载慢或失败时，可以设置 `ELECTRON_MIRROR` 后重试，或�
 
 - 本地保存提示词前 120 个字、项目路径、工具描述、会话标题、会话 ID、进程链和 transcript 路径（`~/.claude-session-cards/state.json`），24 小时无活动后清除。进程链和 transcript 路径只用于跳转窗口和读取标题，不会出现在网页接口里。你改过的标题单独保存在 `titles.json`，不会自动清除。
 - 不上报命令原文，URL 不含查询串，不向任何外部服务发送数据。
-- 历史会话直接读取 Claude Code 的记录文件，不另存副本，只能在本机查看，不随 `--tailscale` 开放。
-- 默认只监听 127.0.0.1。`--tailscale` 开启后，tailnet 内的设备无需登录即可查看上述信息，只有自己的 tailnet 才建议开启。
+- 历史会话直接读取 Claude Code 的记录文件，不另存副本，只能在本机查看。
+- 默认只监听 127.0.0.1。
 
 ## 已知限制
 

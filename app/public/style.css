@@ -132,6 +132,9 @@ body.collapsed #cards { display: none; }
 #menu button { padding: 5px 10px; color: var(--text); text-align: left; white-space: nowrap; }
 #menu button.separated { margin-top: 4px; padding-top: 7px; border-top: 1px solid var(--line); border-radius: 0 0 5px 5px; }
 
+#tip { position: fixed; left: 4px; right: 4px; z-index: 20; padding: 6px 8px; color: var(--text); font-size: 12px; white-space: pre-line; overflow-wrap: anywhere; pointer-events: none; background: var(--menu-bg); border: 1px solid var(--line); border-radius: 6px; }
+#tip[hidden] { display: none; }
+
 /* 桌面置顶窗口：背景全透明，只显示卡片本身 */
 html.overlay, html.overlay body { background: transparent; overflow: hidden; }
 html.overlay body { padding: 0; }

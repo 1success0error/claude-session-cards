@@ -16,6 +16,9 @@ const WIDTH = 320;
 const MARGIN = 16;
 const DEFAULT_OFFSET_Y = 80;
 const TITLE_SCAN_BYTES = 4 * 1024 * 1024;
+const POINTER_POLL_MS = 200;
+const AUTOSTART_NAME = 'claude-session-cards';
+const TAILSCALE = process.env.CLAUDE_SESSION_CARDS_TAILSCALE === '1' || process.argv.includes('--tailscale');
 const HISTORY_SIZE = { width: 760, height: 680 };
 const THEMES = new Set(['system', 'dark', 'light']);
 const OPACITIES = new Set(['opaque', 'standard', 'translucent']);
@@ -201,6 +204,23 @@ function openHistoryWindow() {
   historyWin.loadURL(`http://127.0.0.1:${server.port}/history.html`);
 }
 
+// 开机启动时没有命令行环境，所以把应用目录和 Tailscale 设置都写进启动命令
+const autostartArgs = (tailscale) => [app.getAppPath(), ...(tailscale ? ['--tailscale'] : [])];
+const loginOptions = (tailscale) => ({ path: process.execPath, args: autostartArgs(tailscale), name: AUTOSTART_NAME });
+
+/** 只支持 Windows；其他平台返回 null，不显示这个选项。 */
+function isAutostartEnabled() {
+  if (process.platform !== 'win32') return null;
+  // openAtLogin 要启动命令完全一致才为 true，对不上引号和参数，所以按启动项名称判断
+  return app.getLoginItemSettings(loginOptions(TAILSCALE)).launchItems.some((item) => item.name === AUTOSTART_NAME);
+}
+
+function setAutostart(on) {
+  if (process.platform !== 'win32') return;
+  app.setLoginItemSettings({ ...loginOptions(TAILSCALE), openAtLogin: on });
+  updateTray();
+}
+
 function setPinned(on) {
   pinned = on;
   pinOnTop();
@@ -211,6 +231,19 @@ function setPinned(on) {
 
 function pinnedMenuItem() {
   return { label: '窗口置顶', type: 'checkbox', checked: pinned, click: (item) => setPinned(item.checked) };
+}
+
+/** 窗口穿透时收不到鼠标事件，只能按光标位置判断鼠标是否离开了窗口。 */
+function watchPointer() {
+  let inside = false;
+  setInterval(() => {
+    if (!win || win.isDestroyed() || !win.isVisible() || dragOrigin) return;
+    const { x, y } = screen.getCursorScreenPoint();
+    const b = win.getBounds();
+    const now = x >= b.x && x < b.x + b.width && y >= b.y && y < b.y + b.height;
+    if (inside && !now) win.webContents.send('pointer-left');
+    inside = now;
+  }, POINTER_POLL_MS);
 }
 
 function setupIpc() {
@@ -236,6 +269,10 @@ function setupIpc() {
     if (!fromOurWindow(e)) return;
     setAppearance(value ?? {});
     savePosition();
+  });
+  ipcMain.handle('get-autostart', () => isAutostartEnabled());
+  ipcMain.on('set-autostart', (e, on) => {
+    if (fromOurWindow(e)) setAutostart(on === true);
   });
   ipcMain.handle('get-pinned', () => pinned);
   ipcMain.on('set-pinned', (e, on) => {
@@ -296,7 +333,6 @@ function trayIcon(color) {
 function updateTray() {
   if (!tray) return;
   const showing = Boolean(win?.isVisible());
-  const phoneUrl = server.info.tailscaleUrl;
   const items = [
     {
       label: showing ? '隐藏卡片' : '显示卡片',
@@ -313,7 +349,8 @@ function updateTray() {
     pinnedMenuItem(),
     { label: '历史会话…', click: () => openHistoryWindow() },
   ];
-  if (phoneUrl) items.push({ label: '复制手机访问地址', click: () => clipboard.writeText(phoneUrl) });
+  const autostart = isAutostartEnabled();
+  if (autostart !== null) items.push({ label: '开机自启', type: 'checkbox', checked: autostart, click: (item) => setAutostart(item.checked) });
   items.push({ type: 'separator' }, { label: '退出', click: () => app.quit() });
   tray.setContextMenu(Menu.buildFromTemplate(items));
 }
@@ -323,11 +360,12 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.dock?.hide();
   app.whenReady().then(async () => {
-    server = startServer({ tailscale: process.env.CLAUDE_SESSION_CARDS_TAILSCALE === '1', onShutdown: () => app.quit() });
+    server = startServer({ tailscale: TAILSCALE, onShutdown: () => app.quit() });
     server.onChange(updateTray);
     await server.ready;
     setupIpc();
     createWindow();
+    watchPointer();
     tray = new Tray(trayIcon([76, 195, 138]));
     tray.setToolTip('Claude 会话卡片');
     updateTray();

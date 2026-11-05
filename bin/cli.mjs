@@ -69,6 +69,12 @@ function launch(command, args, env) {
   spawn(command, args, { detached: true, stdio: ['ignore', log, log], windowsHide: true, env }).unref();
 }
 
+/** 卸载时清掉开机启动项。指定了数据目录说明是隔离运行（如测试），不碰真实的启动项。 */
+function removeAutostart() {
+  if (process.platform !== 'win32' || process.env.CLAUDE_SESSION_CARDS_HOME) return;
+  spawnSync('reg', ['delete', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/v', APP_ID, '/f'], { stdio: 'ignore', windowsHide: true });
+}
+
 async function start(flags) {
   const running = await health();
   if (running?.foreign) throw new Error(`端口 ${port()} 被其他程序占用。可设置 CLAUDE_SESSION_CARDS_PORT 换一个端口（Claude Code 也要设置同样的环境变量）`);
@@ -133,6 +139,7 @@ try {
     case 'uninstall': {
       const file = uninstall(claudeDir());
       console.log(`已从 ${file} 移除 hook。`);
+      removeAutostart();
       if (flags.has('--purge')) {
         await stop();
         rmSync(dataDir(), { recursive: true, force: true });

@@ -4,11 +4,13 @@ const host = window.overlay; // 只有桌面置顶窗口才有（preload 注入�
 const STALE_MS = 30 * 60 * 1000; // 进行中却这么久没事件：可能被强杀或中断
 const DONE_VISIBLE_MS = 2 * 60 * 60 * 1000;
 const TITLE_MAX = 80;
+const TIP_DELAY_MS = 500;
 const LABEL = { waiting: '等你确认', error: '出错', working: '执行中', thinking: '思考中', stale: '可能已中断', done: '已完成', idle: '空闲' };
 const ORDER = ['waiting', 'error', 'working', 'thinking', 'stale', 'done', 'idle'];
 
 const $ = (id) => document.getElementById(id);
 const cardsEl = $('cards');
+const tipEl = $('tip');
 let sessions = [];
 let clockOffset = 0;
 let hostPlatform = 'win32';
@@ -73,6 +75,35 @@ async function copyText(text) {
   if (!ok) throw new Error('copy failed');
 }
 
+// 桌面窗口不用原生 title：点击穿透后窗口收不到鼠标事件，原生提示框会一直留在屏幕上
+function setTip(node, text) {
+  if (host) node.dataset.tip = text;
+  else node.title = text;
+}
+
+let tipTarget = null;
+let tipTimer = null;
+
+function hideTip() {
+  clearTimeout(tipTimer);
+  tipTarget = null;
+  if (tipEl.hidden) return;
+  tipEl.hidden = true;
+  reportSize();
+}
+
+function showTip(target) {
+  if (!target.isConnected || editingId || !$('menu').hidden) return;
+  tipEl.textContent = target.dataset.tip;
+  tipEl.hidden = false;
+  const rect = target.getBoundingClientRect();
+  const available = window.screen.availTop + window.screen.availHeight - window.screenY - 8;
+  const height = tipEl.offsetHeight;
+  const below = rect.bottom + 4;
+  tipEl.style.top = `${below + height <= available ? below : Math.max(4, rect.top - height - 4)}px`;
+  reportSize();
+}
+
 function notice(card, text, ms = 2000) {
   card.dataset.notice = text;
   clearTimeout(card.noticeTimer);
@@ -106,6 +137,7 @@ function acknowledge(card, s) {
 }
 
 function startEditing(card, s) {
+  hideTip();
   editingId = s.id;
   const input = el('input', 'title-input');
   input.value = s.title ?? '';
@@ -148,7 +180,7 @@ function buildCard({ s, state }) {
   const card = el('article', `card ${state}`);
   card.dataset.id = s.id;
   const hint = host ? '单击确认完成提示，双击跳转到窗口，右键更多操作' : '点击复制恢复命令';
-  card.title = [s.title, s.cwd, s.task, s.tool, s.prevTool && `上一步：${s.prevTool}`, hint].filter(Boolean).join('\n');
+  setTip(card, [s.title, s.cwd, s.task, s.tool, s.prevTool && `上一步：${s.prevTool}`, hint].filter(Boolean).join('\n'));
 
   const head = el('div', 'head');
   const heading = el('div', 'project', s.title ?? s.project);
@@ -195,7 +227,7 @@ function buildCard({ s, state }) {
     });
     const dismiss = el('button', 'dismiss', '×');
     dismiss.type = 'button';
-    dismiss.title = '移除这张卡片';
+    setTip(dismiss, '移除这张卡片');
     dismiss.setAttribute('aria-label', '移除这张卡片');
     dismiss.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -269,7 +301,7 @@ function render() {
     const n = items.filter((i) => i.state === state).length;
     if (!n) continue;
     const chip = el('span', 'count');
-    chip.title = LABEL[state];
+    setTip(chip, LABEL[state]);
     const dot = el('span', 'dot');
     dot.style.background = `var(--${state})`;
     chip.append(dot, String(n));
@@ -277,6 +309,7 @@ function render() {
   }
   if (!items.length) counts.textContent = 'Claude 会话';
   renderCards(items);
+  if (tipTarget && !tipTarget.isConnected) hideTip();
   updateBarAttention();
   $('toggle').textContent = document.body.classList.contains('collapsed') ? '▾' : '▴';
   reportSize();
@@ -314,7 +347,11 @@ function reportSize() {
   const collapsed = document.body.classList.contains('collapsed');
   const content = $('bar').getBoundingClientRect().height + (collapsed ? 0 : 6 + cardsEl.scrollHeight);
   const menu = $('menu');
-  const height = Math.ceil(Math.max(content, menu.hidden ? 0 : menu.offsetTop + menu.offsetHeight + 4));
+  const height = Math.ceil(Math.max(
+    content,
+    menu.hidden ? 0 : menu.offsetTop + menu.offsetHeight + 4,
+    tipEl.hidden ? 0 : tipEl.offsetTop + tipEl.offsetHeight + 4,
+  ));
   if (height !== lastHeight || menu.hidden === lastMenuHidden) {
     lastHeight = height;
     lastMenuHidden = !menu.hidden;
@@ -335,13 +372,31 @@ if (host) {
   document.addEventListener('mousemove', (e) => {
     if (!dragging) setInteractive(Boolean(document.elementFromPoint(e.clientX, e.clientY)?.closest('#bar, .card, #menu')));
   });
-  document.documentElement.addEventListener('mouseleave', () => {
+  // 鼠标离开窗口：穿透状态下 mouseleave 不一定收得到，所以主进程也会按光标位置通知
+  const pointerLeft = () => {
     if (!dragging) setInteractive(false);
+    hideTip();
     closeMenu(); // 窗口不抢焦点，收不到“点到别处”，只能以鼠标离开为准
-  });
+  };
+  document.documentElement.addEventListener('mouseleave', pointerLeft);
+  host.onPointerLeft(pointerLeft);
   document.addEventListener('pointerdown', (e) => {
-    if (!e.target.closest('#menu')) closeMenu();
+    hideTip();
+    if (!e.target.closest?.('#menu')) closeMenu();
   }, true);
+  document.addEventListener('mouseover', (e) => {
+    const target = e.target.closest?.('[data-tip]') ?? null;
+    if (target === tipTarget) return;
+    hideTip();
+    tipTarget = target;
+    if (target) tipTimer = setTimeout(() => showTip(target), TIP_DELAY_MS);
+  });
+  cardsEl.addEventListener('scroll', hideTip);
+  for (const id of ['history', 'toggle']) {
+    const button = $(id);
+    setTip(button, button.title);
+    button.removeAttribute('title');
+  }
 
   const bar = $('bar');
   let start = null;
@@ -385,6 +440,7 @@ function applyAppearance(next) {
 }
 
 function renderMenu(entries, x, y) {
+  hideTip();
   const menu = $('menu');
   menu.replaceChildren(...entries.map(({ label, action, separated, stay }) => {
     const button = el('button', separated ? 'separated' : '', label);
@@ -407,7 +463,7 @@ function renderMenu(entries, x, y) {
 
 async function openMenu(e, items) {
   const { clientX: x, clientY: y } = e;
-  const pinned = await host.getPinned();
+  const [pinned, autostart] = await Promise.all([host.getPinned(), host.getAutostart()]);
   const main = () => {
     const submenu = (label, options, key) => ({
       label: `${label} ▸`,
@@ -427,6 +483,7 @@ async function openMenu(e, items) {
     renderMenu([
       ...items,
       { label: `${pinned ? '✓ ' : ''}窗口置顶`, action: () => host.setPinned(!pinned), separated: items.length > 0 },
+      ...(autostart === null ? [] : [{ label: `${autostart ? '✓ ' : ''}开机自启`, action: () => host.setAutostart(!autostart) }]),
       submenu('外观', THEMES, 'theme'),
       submenu('透明度', OPACITIES, 'opacity'),
     ], x, y);
