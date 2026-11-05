@@ -1,14 +1,14 @@
 {
   "name": "claude-session-cards",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Always-on-top status cards for all your Claude Code sessions, driven by Claude Code hooks.",
   "license": "MIT",
-  "author": "RandomBinaryTree",
+  "author": "1success0error",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/RandomBinaryTree/claude-session-cards.git"
+    "url": "git+https://github.com/1success0error/claude-session-cards.git"
   },
-  "homepage": "https://github.com/RandomBinaryTree/claude-session-cards#readme",
+  "homepage": "https://github.com/1success0error/claude-session-cards#readme",
   "type": "module",
   "main": "app/main.mjs",
   "bin": {
