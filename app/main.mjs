@@ -9,6 +9,7 @@ import { scanHistory, SESSION_ID_RE } from '../lib/history.mjs';
 import { claudeDir, dataDir } from '../lib/paths.mjs';
 import { placeBeside } from '../lib/placement.mjs';
 import { startServer } from '../lib/server.mjs';
+import { buildTrayImage } from './tray-icon.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WINDOW_FILE = join(dataDir(), 'window.json');
@@ -313,20 +314,6 @@ function setupIpc() {
   });
 }
 
-function trayIcon(color) {
-  const size = 16;
-  const buf = Buffer.alloc(size * size * 4);
-  const c = (size - 1) / 2;
-  for (let py = 0; py < size; py += 1) {
-    for (let px = 0; px < size; px += 1) {
-      if (Math.hypot(px - c, py - c) > 6.5) continue;
-      const i = (py * size + px) * 4;
-      buf[i] = color[2]; buf[i + 1] = color[1]; buf[i + 2] = color[0]; buf[i + 3] = 255; // BGRA
-    }
-  }
-  return nativeImage.createFromBitmap(buf, { width: size, height: size });
-}
-
 function updateTray() {
   if (!tray) return;
   const showing = Boolean(win?.isVisible());
@@ -362,7 +349,7 @@ if (!app.requestSingleInstanceLock()) {
     setupIpc();
     createWindow();
     watchPointer();
-    tray = new Tray(trayIcon([76, 195, 138]));
+    tray = new Tray(buildTrayImage(nativeImage));
     tray.setToolTip('Claude 会话卡片');
     updateTray();
   }).catch((err) => {
