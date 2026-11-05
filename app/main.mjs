@@ -1,11 +1,13 @@
 // 桌面置顶卡片窗口：透明、不占任务栏、不抢焦点、卡片以外点击穿透。
 // 只在创建窗口和手动「显示」时置顶，不做定时重新置顶：那样会打断全屏游戏和截图。
 import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, screen, Tray } from 'electron';
-import { execFile } from 'node:child_process';
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs';
+import { execFile, spawn } from 'node:child_process';
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dataDir } from '../lib/paths.mjs';
+import { scanHistory, SESSION_ID_RE } from '../lib/history.mjs';
+import { claudeDir, dataDir } from '../lib/paths.mjs';
+import { placeBeside } from '../lib/placement.mjs';
 import { startServer } from '../lib/server.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -14,6 +16,7 @@ const WIDTH = 320;
 const MARGIN = 16;
 const DEFAULT_OFFSET_Y = 80;
 const TITLE_SCAN_BYTES = 4 * 1024 * 1024;
+const HISTORY_SIZE = { width: 760, height: 680 };
 // Electron 的 forward 选项只支持 Windows 和 macOS：Linux 上穿透后就再也收不到鼠标，所以不穿透
 const CLICK_THROUGH = process.platform !== 'linux';
 
@@ -22,6 +25,7 @@ let tray = null;
 let server = null;
 let dragOrigin = null;
 let pinned = true;
+let historyWin = null;
 
 function loadPosition() {
   try {
@@ -123,6 +127,57 @@ function focusSession(id) {
   });
 }
 
+/** 在新的 Windows Terminal 标签页恢复；没有 Windows Terminal 时开普通控制台。 */
+function openResumeTerminal(id, cwd) {
+  // id 已按 UUID 校验过，可以放进命令行
+  const shell = ['powershell.exe', '-NoExit', '-Command', `claude --resume ${id}`];
+  const wt = spawn('wt.exe', ['-w', '0', 'new-tab', '-d', cwd.replaceAll(';', '\\;'), ...shell], { detached: true, stdio: 'ignore', windowsHide: false });
+  wt.on('error', () => {
+    spawn('cmd.exe', ['/c', 'start', '""', '/D', cwd, ...shell], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  });
+  wt.unref();
+}
+
+/** 返回 'opened' | 'focused' | 'no-dir' | 'not-found' | 'unsupported'。 */
+async function resumeSession(id) {
+  if (!SESSION_ID_RE.test(id)) return 'not-found';
+  // 会话还开着就切过去：同一个会话开两个进程，记录会分叉
+  if (server.getSession(id)?.chain?.length) {
+    const result = await focusSession(id);
+    if (result === 'focused' || result === 'refused') return 'focused';
+  }
+  if (process.platform !== 'win32') return 'unsupported';
+  const entry = (await scanHistory(claudeDir())).find((s) => s.id === id);
+  if (!entry) return 'not-found';
+  if (!entry.cwd || !existsSync(entry.cwd)) return 'no-dir';
+  openResumeTerminal(id, entry.cwd);
+  return 'opened';
+}
+
+function openHistoryWindow() {
+  if (historyWin) {
+    if (historyWin.isMinimized()) historyWin.restore();
+    historyWin.show();
+    historyWin.focus();
+    return;
+  }
+  // 打开时跟随卡片当前所在的位置和显示器；已打开的窗口保留用户摆放的位置
+  const anchor = win.getBounds();
+  historyWin = new BrowserWindow({
+    ...placeBeside(anchor, HISTORY_SIZE, screen.getDisplayMatching(anchor).workArea),
+    minWidth: 420,
+    minHeight: 360,
+    title: 'Claude 历史会话',
+    backgroundColor: '#17181c',
+    autoHideMenuBar: true,
+    webPreferences: { preload: join(HERE, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
+  });
+  historyWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  historyWin.webContents.on('will-navigate', (e) => e.preventDefault());
+  historyWin.on('closed', () => { historyWin = null; });
+  historyWin.loadURL(`http://127.0.0.1:${server.port}/history.html`);
+}
+
 function setPinned(on) {
   pinned = on;
   pinOnTop();
@@ -137,6 +192,11 @@ function pinnedMenuItem() {
 
 function setupIpc() {
   const fromOurWindow = (e) => win && e.sender === win.webContents;
+  const fromHistory = (e) => historyWin && e.sender === historyWin.webContents;
+  ipcMain.on('open-history', (e) => {
+    if (fromOurWindow(e)) openHistoryWindow();
+  });
+  ipcMain.handle('resume-session', (e, id) => (fromHistory(e) ? resumeSession(String(id)) : 'not-found'));
   ipcMain.handle('get-pinned', () => pinned);
   ipcMain.on('set-pinned', (e, on) => {
     if (fromOurWindow(e)) setPinned(on === true);
@@ -165,7 +225,7 @@ function setupIpc() {
     savePosition();
   });
   ipcMain.handle('copy', (e, text) => {
-    if (fromOurWindow(e)) clipboard.writeText(text);
+    if (fromOurWindow(e) || fromHistory(e)) clipboard.writeText(text);
   });
 }
 
@@ -201,6 +261,7 @@ function updateTray() {
       },
     },
     pinnedMenuItem(),
+    { label: '历史会话…', click: () => openHistoryWindow() },
   ];
   if (phoneUrl) items.push({ label: '复制手机访问地址', click: () => clipboard.writeText(phoneUrl) });
   items.push({ type: 'separator' }, { label: '退出', click: () => app.quit() });

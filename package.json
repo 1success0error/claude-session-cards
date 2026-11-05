@@ -1,6 +1,6 @@
 {
   "name": "claude-session-cards",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Always-on-top status cards for all your Claude Code sessions, driven by Claude Code hooks.",
   "license": "MIT",
   "author": "RandomBinaryTree",

@@ -302,6 +302,15 @@ if (host) {
   });
 }
 
+// 历史只对本机开放，手机上不显示入口
+const historyButton = $('history');
+historyButton.hidden = !host && !['127.0.0.1', 'localhost'].includes(location.hostname);
+historyButton.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (host) host.openHistory();
+  else location.href = '/history.html';
+});
+
 render();
 connect();
 setInterval(render, 1000);

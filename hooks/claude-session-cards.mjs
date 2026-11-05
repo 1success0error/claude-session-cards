@@ -9,7 +9,7 @@ const URL_EVENT = `http://127.0.0.1:${port}/api/event`;
 const TEXT_MAX = 120;
 
 const clip = (s) => {
-  const chars = Array.from(String(s ?? '').replace(/\s+/g, ' ').trim());
+  const chars = Array.from(String(s ?? '').replace(/<\/?pasted_content\b[^>]*>/g, ' ').replace(/\s+/g, ' ').trim());
   return chars.length > TEXT_MAX ? `${chars.slice(0, TEXT_MAX - 1).join('')}…` : chars.join('');
 };
 

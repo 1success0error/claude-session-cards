@@ -1,7 +1,7 @@
 // 端到端：临时配置目录 + 独立端口，走网页模式，不碰真实配置，也不开窗口。
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -62,6 +62,18 @@ test('访问控制', async () => {
   assert.equal((await post({ 'Content-Type': 'text/plain' })).status, 403);
   assert.equal((await fetch(`${BASE}/../package.json`)).status, 404);
   assert.equal((await fetch(`${BASE}/api/shutdown`, { method: 'POST', headers: { 'Content-Type': 'text/plain' } })).status, 403);
+});
+
+test('历史接口读取配置目录里的会话', async () => {
+  const id = '00000000-0000-4000-8000-000000000001';
+  const dir = join(env.CLAUDE_CONFIG_DIR, 'projects', 'demo');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${id}.jsonl`), `${JSON.stringify({ type: 'user', cwd: '/work/demo', message: { content: '历史提示词' } })}\n`);
+  const { sessions: rows } = await (await fetch(`${BASE}/api/history`)).json();
+  assert.equal(rows[0].id, id);
+  assert.equal(rows[0].prompt, '历史提示词');
+  assert.equal(rows[0].active, false);
+  assert.equal((await fetch(`${BASE}/history.html`)).status, 200);
 });
 
 test('退出并卸载', async () => {

@@ -32,6 +32,8 @@ button { font: inherit; color: var(--muted); background: none; border: 0; border
 button:hover { color: var(--text); background: rgba(255, 255, 255, 0.1); }
 button:focus-visible { outline: 2px solid var(--thinking); }
 #toggle { width: 24px; height: 22px; padding: 0; }
+#history { flex: none; height: 22px; padding: 0 6px; font-size: 12px; }
+#history[hidden] { display: none; }
 
 #cards { display: flex; flex-direction: column; gap: 6px; }
 body.collapsed #cards { display: none; }

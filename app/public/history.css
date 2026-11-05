@@ -1,0 +1,44 @@
+:root {
+  --bg: #17181c;
+  --panel: #1e2026;
+  --hover: #272a31;
+  --line: rgba(255, 255, 255, 0.12);
+  --text: #f1f2f4;
+  --muted: #a4a9b3;
+  --accent: #6ea8fe;
+  --working: #4cc38a;
+  --error: #f26d6d;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { display: flex; flex-direction: column; color: var(--text); background: var(--bg); font: 14px/1.45 "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif; }
+
+header { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px 6px; }
+input, select, button { min-height: 32px; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+input { flex: 1 1 220px; min-width: 0; padding: 0 10px; }
+select { flex: 0 1 180px; min-width: 0; padding: 0 6px; }
+button { padding: 0 12px; cursor: pointer; }
+button:hover, select:hover { background: var(--hover); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+#summary { margin: 0; padding: 0 16px 8px; color: var(--muted); font-size: 12px; }
+#summary.error { color: var(--error); }
+#list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px 16px; }
+.group { margin: 12px 0 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.empty { padding: 40px 0; color: var(--muted); text-align: center; }
+
+.row { display: block; width: 100%; min-height: 0; padding: 9px 12px; margin-bottom: 6px; text-align: left; background: var(--panel); border-color: transparent; }
+.row:hover { border-color: var(--line); }
+.title { display: flex; align-items: baseline; gap: 8px; font-weight: 600; }
+.title span:first-child { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.badge { flex: none; color: var(--working); font-size: 12px; font-weight: 400; }
+.prompt, .meta { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.prompt { margin-top: 2px; color: var(--muted); font-size: 13px; }
+.meta { margin-top: 3px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+#menu { position: fixed; z-index: 10; display: flex; flex-direction: column; min-width: 150px; padding: 4px; background: #24262c; border: 1px solid var(--line); border-radius: 8px; }
+#menu[hidden] { display: none; }
+#menu button { min-height: 0; padding: 6px 10px; text-align: left; white-space: nowrap; background: none; border: 0; border-radius: 5px; }
+#menu button:hover { background: rgba(255, 255, 255, 0.1); }
