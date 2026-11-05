@@ -207,6 +207,7 @@ function connect() {
 }
 
 let lastHeight = 0;
+let lastMenuHidden = true;
 function reportSize() {
   if (!host) return;
   // 用内容高度而不是 #root 的实际高度：窗口到上限后 #root 被 100vh 限住，量它就再也长不回来
@@ -214,9 +215,10 @@ function reportSize() {
   const content = $('bar').getBoundingClientRect().height + (collapsed ? 0 : 6 + cardsEl.scrollHeight);
   const menu = $('menu');
   const height = Math.ceil(Math.max(content, menu.hidden ? 0 : menu.offsetTop + menu.offsetHeight + 4));
-  if (height !== lastHeight) {
+  if (height !== lastHeight || menu.hidden === lastMenuHidden) {
     lastHeight = height;
-    host.resize(height);
+    lastMenuHidden = !menu.hidden;
+    host.resize(height, !menu.hidden);
   }
 }
 
@@ -273,27 +275,66 @@ function closeMenu() {
   reportSize();
 }
 
-async function openMenu(e, items) {
-  const { clientX, clientY } = e;
-  const pinned = await host.getPinned();
+const THEMES = [['system', '跟随系统'], ['dark', '深色'], ['light', '浅色']];
+const OPACITIES = [['opaque', '不透明'], ['standard', '标准'], ['translucent', '较透明']];
+let appearance = { theme: 'system', opacity: 'standard' };
+
+function applyAppearance(next) {
+  appearance = next;
+  document.documentElement.dataset.opacity = appearance.opacity;
+}
+
+function renderMenu(entries, x, y) {
   const menu = $('menu');
-  const entries = [...items, { label: `${pinned ? '✓ ' : ''}窗口置顶`, action: () => host.setPinned(!pinned), separated: items.length > 0 }];
-  menu.replaceChildren(...entries.map(({ label, action, separated }) => {
+  menu.replaceChildren(...entries.map(({ label, action, separated, stay }) => {
     const button = el('button', separated ? 'separated' : '', label);
     button.type = 'button';
     button.setAttribute('role', 'menuitem');
     button.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      closeMenu();
+      if (!stay) closeMenu();
       action();
     });
     return button;
   }));
   menu.hidden = false;
-  menu.style.left = `${Math.max(4, Math.min(clientX, window.innerWidth - menu.offsetWidth - 4))}px`;
-  menu.style.top = `${clientY}px`;
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - menu.offsetWidth - 4))}px`;
+  // 优先往上收；窗口本身离底部太近时，由主进程临时上移窗口
+  const available = window.screen.availTop + window.screen.availHeight - window.screenY;
+  menu.style.top = `${Math.max(4, Math.min(y, available - menu.offsetHeight - 12))}px`;
   reportSize();
 }
+
+async function openMenu(e, items) {
+  const { clientX: x, clientY: y } = e;
+  const pinned = await host.getPinned();
+  const main = () => {
+    const submenu = (label, options, key) => ({
+      label: `${label} ▸`,
+      stay: true,
+      action: () => renderMenu([
+        { label: '‹ 返回', stay: true, action: main },
+        ...options.map(([value, name]) => ({
+          label: `${appearance[key] === value ? '✓ ' : ''}${name}`,
+          action: () => {
+            applyAppearance({ ...appearance, [key]: value });
+            host.setAppearance(appearance);
+          },
+          separated: value === options[0][0],
+        })),
+      ], x, y),
+    });
+    renderMenu([
+      ...items,
+      { label: `${pinned ? '✓ ' : ''}窗口置顶`, action: () => host.setPinned(!pinned), separated: items.length > 0 },
+      submenu('外观', THEMES, 'theme'),
+      submenu('透明度', OPACITIES, 'opacity'),
+    ], x, y);
+  };
+  main();
+}
+
+if (host) host.getAppearance().then(applyAppearance);
 
 if (host) {
   $('bar').addEventListener('contextmenu', (e) => {

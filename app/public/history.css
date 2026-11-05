@@ -1,14 +1,32 @@
 :root {
+  color-scheme: dark light;
   --bg: #17181c;
   --panel: #1e2026;
   --hover: #272a31;
+  --menu-bg: #24262c;
   --line: rgba(255, 255, 255, 0.12);
+  --tint: rgba(255, 255, 255, 0.1);
   --text: #f1f2f4;
   --muted: #a4a9b3;
   --accent: #6ea8fe;
   --working: #4cc38a;
   --error: #f26d6d;
-  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f3f4f6;
+    --panel: #ffffff;
+    --hover: #eceef1;
+    --menu-bg: #ffffff;
+    --line: rgba(0, 0, 0, 0.16);
+    --tint: rgba(0, 0, 0, 0.07);
+    --text: #1f2328;
+    --muted: #59636e;
+    --accent: #0969da;
+    --working: #1a7f37;
+    --error: #c4232b;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -38,7 +56,7 @@ button:hover, select:hover { background: var(--hover); }
 .prompt { margin-top: 2px; color: var(--muted); font-size: 13px; }
 .meta { margin-top: 3px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 
-#menu { position: fixed; z-index: 10; display: flex; flex-direction: column; min-width: 150px; padding: 4px; background: #24262c; border: 1px solid var(--line); border-radius: 8px; }
+#menu { position: fixed; z-index: 10; display: flex; flex-direction: column; min-width: 150px; padding: 4px; background: var(--menu-bg); border: 1px solid var(--line); border-radius: 8px; }
 #menu[hidden] { display: none; }
 #menu button { min-height: 0; padding: 6px 10px; text-align: left; white-space: nowrap; background: none; border: 0; border-radius: 5px; }
-#menu button:hover { background: rgba(255, 255, 255, 0.1); }
+#menu button:hover { background: var(--tint); }

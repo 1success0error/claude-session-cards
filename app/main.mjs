@@ -1,6 +1,6 @@
 // 桌面置顶卡片窗口：透明、不占任务栏、不抢焦点、卡片以外点击穿透。
 // 只在创建窗口和手动「显示」时置顶，不做定时重新置顶：那样会打断全屏游戏和截图。
-import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, screen, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, nativeTheme, screen, Tray } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -17,6 +17,8 @@ const MARGIN = 16;
 const DEFAULT_OFFSET_Y = 80;
 const TITLE_SCAN_BYTES = 4 * 1024 * 1024;
 const HISTORY_SIZE = { width: 760, height: 680 };
+const THEMES = new Set(['system', 'dark', 'light']);
+const OPACITIES = new Set(['opaque', 'standard', 'translucent']);
 // Electron 的 forward 选项只支持 Windows 和 macOS：Linux 上穿透后就再也收不到鼠标，所以不穿透
 const CLICK_THROUGH = process.platform !== 'linux';
 
@@ -24,13 +26,23 @@ let win = null;
 let tray = null;
 let server = null;
 let dragOrigin = null;
+let menuShift = null;
 let pinned = true;
+let appearance = { theme: 'system', opacity: 'standard' };
 let historyWin = null;
+
+/** 主题交给 nativeTheme：所有窗口的 prefers-color-scheme 都跟着变，手机网页不受影响。 */
+function setAppearance({ theme, opacity }) {
+  if (THEMES.has(theme)) appearance.theme = theme;
+  if (OPACITIES.has(opacity)) appearance.opacity = opacity;
+  nativeTheme.themeSource = appearance.theme;
+}
 
 function loadPosition() {
   try {
-    const { x, y, pinned: savedPinned } = JSON.parse(readFileSync(WINDOW_FILE, 'utf8'));
+    const { x, y, pinned: savedPinned, theme, opacity } = JSON.parse(readFileSync(WINDOW_FILE, 'utf8'));
     if (typeof savedPinned === 'boolean') pinned = savedPinned;
+    setAppearance({ theme, opacity });
     if (Number.isInteger(x) && Number.isInteger(y)) {
       // 显示器可能已拔掉：位置不在任何屏幕内就回到默认
       const area = screen.getDisplayNearestPoint({ x, y }).workArea;
@@ -43,10 +55,11 @@ function loadPosition() {
 
 function savePosition() {
   if (!win || win.isDestroyed()) return;
-  const { x, y } = win.getBounds();
+  const { x, y: currentY } = win.getBounds();
+  const y = menuShift ?? currentY; // 菜单造成的临时上移不算用户摆放的位置
   try {
     mkdirSync(dirname(WINDOW_FILE), { recursive: true });
-    writeFileSync(WINDOW_FILE, JSON.stringify({ x, y, pinned }));
+    writeFileSync(WINDOW_FILE, JSON.stringify({ x, y, pinned, ...appearance }));
   } catch {}
 }
 
@@ -168,7 +181,7 @@ function openHistoryWindow() {
     minWidth: 420,
     minHeight: 360,
     title: 'Claude 历史会话',
-    backgroundColor: '#17181c',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#17181c' : '#f3f4f6',
     autoHideMenuBar: true,
     webPreferences: { preload: join(HERE, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
@@ -197,6 +210,12 @@ function setupIpc() {
     if (fromOurWindow(e)) openHistoryWindow();
   });
   ipcMain.handle('resume-session', (e, id) => (fromHistory(e) ? resumeSession(String(id)) : 'not-found'));
+  ipcMain.handle('get-appearance', () => appearance);
+  ipcMain.on('set-appearance', (e, value) => {
+    if (!fromOurWindow(e)) return;
+    setAppearance(value ?? {});
+    savePosition();
+  });
   ipcMain.handle('get-pinned', () => pinned);
   ipcMain.on('set-pinned', (e, on) => {
     if (fromOurWindow(e)) setPinned(on === true);
@@ -205,12 +224,22 @@ function setupIpc() {
   ipcMain.on('interactive', (e, on) => {
     if (fromOurWindow(e)) setClickThrough(!on);
   });
-  ipcMain.on('resize', (e, height) => {
+  ipcMain.on('resize', (e, height, menuOpen) => {
     if (!fromOurWindow(e) || !Number.isFinite(height)) return;
     const b = win.getBounds();
     const area = screen.getDisplayMatching(b).workArea;
-    const max = Math.max(60, area.y + area.height - b.y - MARGIN);
-    win.setBounds({ x: b.x, y: b.y, width: WIDTH, height: Math.min(max, Math.max(30, Math.ceil(height))) });
+    const wanted = Math.max(30, Math.ceil(height));
+    const bottom = area.y + area.height - MARGIN;
+    let y = b.y;
+    if (menuOpen && y + wanted > bottom) {
+      // 菜单放不下时窗口临时上移，关闭后回到原位；卡片内容本身仍然只在窗口内滚动
+      menuShift ??= y;
+      y = Math.max(area.y + MARGIN, bottom - wanted);
+    } else if (!menuOpen && menuShift !== null) {
+      y = menuShift;
+      menuShift = null;
+    }
+    win.setBounds({ x: b.x, y, width: WIDTH, height: Math.min(Math.max(60, bottom - y), wanted) });
   });
   ipcMain.on('drag-start', (e) => {
     if (fromOurWindow(e)) dragOrigin = win.getBounds();

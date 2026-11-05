@@ -1,7 +1,14 @@
 :root {
+  color-scheme: dark light;
   --bg: #17181c;
-  --card: rgba(30, 32, 38, 0.94);
+  --card-rgb: 30 32 38;
+  --card-alpha: 0.94;
+  --translucent-alpha: 0.82;
+  --card: rgb(var(--card-rgb) / var(--card-alpha));
+  --menu-bg: #24262c;
+  --notice-bg: rgba(23, 24, 28, 0.94);
   --line: rgba(255, 255, 255, 0.12);
+  --tint: rgba(255, 255, 255, 0.1);
   --text: #f1f2f4;
   --muted: #a4a9b3;
   --waiting: #f5b83d;
@@ -9,10 +16,35 @@
   --working: #4cc38a;
   --thinking: #6ea8fe;
   --stale: #c08a5a;
-  --done: #8b919c;
-  --idle: #6a707b;
-  color-scheme: dark;
+  --done: #a4a9b3;
+  --idle: #9198a3;
 }
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f3f4f6;
+    --card-rgb: 255 255 255;
+    --card-alpha: 0.96;
+    --translucent-alpha: 0.84;
+    --menu-bg: #ffffff;
+    --notice-bg: rgba(255, 255, 255, 0.96);
+    --line: rgba(0, 0, 0, 0.16);
+    --tint: rgba(0, 0, 0, 0.07);
+    --text: #1f2328;
+    --muted: #59636e;
+    --waiting: #8a5a00;
+    --error: #c4232b;
+    --working: #1a7f37;
+    --thinking: #0969da;
+    --stale: #8f5a24;
+    --done: #5f6670;
+    --idle: #656c76;
+  }
+}
+
+/* 透明度只改卡片背景，文字始终不透明 */
+html[data-opacity="opaque"] { --card-alpha: 1; }
+html[data-opacity="translucent"] { --card-alpha: var(--translucent-alpha); }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; color: var(--text); font: 13px/1.4 "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif; }
@@ -29,7 +61,7 @@ body { background: var(--bg); padding: 16px; }
 .count { display: inline-flex; align-items: center; gap: 4px; }
 #conn { color: var(--error); font-size: 12px; }
 button { font: inherit; color: var(--muted); background: none; border: 0; border-radius: 5px; cursor: pointer; }
-button:hover { color: var(--text); background: rgba(255, 255, 255, 0.1); }
+button:hover { color: var(--text); background: var(--tint); }
 button:focus-visible { outline: 2px solid var(--thinking); }
 #toggle { width: 24px; height: 22px; padding: 0; }
 #history { flex: none; height: 22px; padding: 0 6px; font-size: 12px; }
@@ -66,17 +98,17 @@ body.collapsed #cards { display: none; }
 .tool { color: var(--text); font-size: 12px; }
 .prev { color: var(--muted); font-size: 11px; -webkit-line-clamp: 1; }
 .foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.progress { flex: 1; height: 4px; overflow: hidden; background: rgba(255, 255, 255, 0.12); border-radius: 2px; }
+.progress { flex: 1; height: 4px; overflow: hidden; background: var(--tint); border-radius: 2px; }
 .progress i { display: block; height: 100%; background: var(--accent); }
 .spacer { flex: 1; }
 .dismiss { position: absolute; right: 4px; bottom: 3px; display: none; padding: 0 5px; font-size: 13px; }
 .card:hover .dismiss { display: block; }
 .card[data-notice]::after {
   content: attr(data-notice); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  padding: 0 10px; text-align: center; color: var(--text); font-weight: 600; background: rgba(23, 24, 28, 0.92); border-radius: 7px;
+  padding: 0 10px; text-align: center; color: var(--text); font-weight: 600; background: var(--notice-bg); border-radius: 7px;
 }
 
-#menu { position: fixed; z-index: 10; display: flex; flex-direction: column; min-width: 150px; padding: 4px; background: #24262c; border: 1px solid var(--line); border-radius: 8px; }
+#menu { position: fixed; z-index: 10; display: flex; flex-direction: column; min-width: 150px; padding: 4px; background: var(--menu-bg); border: 1px solid var(--line); border-radius: 8px; }
 #menu[hidden] { display: none; }
 #menu button { padding: 5px 10px; color: var(--text); text-align: left; white-space: nowrap; }
 #menu button.separated { margin-top: 4px; padding-top: 7px; border-top: 1px solid var(--line); border-radius: 0 0 5px 5px; }
