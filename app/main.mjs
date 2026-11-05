@@ -5,11 +5,14 @@ import { execFile, spawn } from 'node:child_process';
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { removeSessionVariables } from '../lib/env.mjs';
 import { scanHistory, SESSION_ID_RE } from '../lib/history.mjs';
 import { claudeDir, dataDir } from '../lib/paths.mjs';
 import { placeBeside } from '../lib/placement.mjs';
 import { startServer } from '../lib/server.mjs';
 import { buildTrayImage } from './tray-icon.mjs';
+
+removeSessionVariables();
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WINDOW_FILE = join(dataDir(), 'window.json');
@@ -144,7 +147,7 @@ function runFocusScript(env) {
   });
 }
 
-/** 改标题要键盘焦点。Windows 的前台锁可能让 win.focus() 无效，所以走切换脚本，并记住原来的窗口。 */
+/** 改标题要键盘焦点。平时卡片窗口不抢焦点，所以临时打开，并记住原来的窗口。 */
 async function beginEditing() {
   if (process.platform !== 'win32') {
     win.setFocusable(true);
@@ -154,7 +157,7 @@ async function beginEditing() {
   // 必须最先读：setFocusable 和 focus 都可能改变前台窗口，之后就读不到原来的窗口了
   const own = hwndOf(win);
   const previous = await runFocusScript({ CARDS_QUERY: '1' });
-  if (previous && previous !== own) editingReturnTo = previous;
+  editingReturnTo = previous && previous !== own ? previous : null;
   win.setFocusable(true);
   await runFocusScript({ CARDS_HWND: own });
 }
@@ -299,7 +302,6 @@ function setupIpc() {
     if (fromOurWindow(e)) openHistoryWindow();
   });
   ipcMain.handle('resume-session', (e, id) => (fromHistory(e) ? openSession(String(id)) : 'not-found'));
-  // 平时不抢焦点；只有改标题时才需要键盘输入
   ipcMain.handle('set-editing', (e, on) => {
     if (fromOurWindow(e)) return on ? beginEditing() : endEditing();
   });

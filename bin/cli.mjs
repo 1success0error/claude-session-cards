@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, openSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { removeSessionVariables } from '../lib/env.mjs';
 import { APP_ID, claudeDir, dataDir, port } from '../lib/paths.mjs';
 import { install, isInstalled, uninstall } from '../lib/settings.mjs';
 
@@ -80,7 +81,7 @@ async function start(flags) {
     console.log(`已在运行: ${BASE}/`);
     return;
   }
-  const env = { ...process.env };
+  const env = removeSessionVariables({ ...process.env });
   delete env.ELECTRON_RUN_AS_NODE;
 
   const binary = flags.has('--web') ? null : electronBinary();

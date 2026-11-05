@@ -18,6 +18,7 @@ Add-Type -Namespace CardsNative -Name Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool altTab);
 [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out int processId);
 [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint attach, uint attachTo, bool on);
 [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
 '@
@@ -105,7 +106,9 @@ if ($env:CARDS_TITLE -and $target -and $target.ProcessName -eq 'WindowsTerminal'
         foreach ($tab in $root.FindAll([Windows.Automation.TreeScope]::Descendants, $isTab)) {
             # Claude Code prefixes the title with a spinner character, so match on containment.
             if ($tab.Current.Name.Contains($env:CARDS_TITLE)) {
-                $tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select()
+                # Selecting a tab that is already selected moves keyboard focus onto the tab header.
+                $selection = $tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)
+                if (-not $selection.Current.IsSelected) { $selection.Select() }
                 break
             }
         }
@@ -116,16 +119,42 @@ if ($env:CARDS_TITLE -and $target -and $target.ProcessName -eq 'WindowsTerminal'
 
 # Never inject keystrokes here: a synthetic Alt press left the Chinese IME without a candidate
 # window in the terminal until focus moved away and back.
+# The IME only works while the terminal control has keyboard focus. If focus lands anywhere else,
+# such as the tab header, the candidate window stays hidden until focus moves away and back.
+function Restore-TerminalFocus {
+    $processId = 0
+    [void][CardsNative.Win32]::GetWindowThreadProcessId($hwnd, [ref]$processId)
+    $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    if (-not $proc -or $proc.ProcessName -ne 'WindowsTerminal') { return }
+    try {
+        Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+        Start-Sleep -Milliseconds 100
+        $focused = [Windows.Automation.AutomationElement]::FocusedElement
+        if ($focused -and $focused.Current.ClassName -eq 'TermControl') { return }
+        $root = [Windows.Automation.AutomationElement]::FromHandle($hwnd)
+        $isTerminal = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ClassNameProperty, 'TermControl')
+        foreach ($control in $root.FindAll([Windows.Automation.TreeScope]::Descendants, $isTerminal)) {
+            if (-not $control.Current.IsOffscreen) {
+                $control.SetFocus()
+                'terminal-focus=restored'
+                return
+            }
+        }
+    } catch {
+        # Focus repair is best effort: the window has already been brought forward.
+    }
+}
+
 function Test-Focused {
     Start-Sleep -Milliseconds 120
     return [CardsNative.Win32]::GetForegroundWindow() -eq $hwnd
 }
 
 [void][CardsNative.Win32]::SetForegroundWindow($hwnd)
-if (Test-Focused) { 'method=foreground'; exit 0 }
+if (Test-Focused) { 'method=foreground'; Restore-TerminalFocus; exit 0 }
 
 [CardsNative.Win32]::SwitchToThisWindow($hwnd, $true)
-if (Test-Focused) { 'method=switch'; exit 0 }
+if (Test-Focused) { 'method=switch'; Restore-TerminalFocus; exit 0 }
 
 $foregroundThread = [CardsNative.Win32]::GetWindowThreadProcessId([CardsNative.Win32]::GetForegroundWindow(), [IntPtr]::Zero)
 $thisThread = [CardsNative.Win32]::GetCurrentThreadId()
@@ -137,5 +166,5 @@ if ([CardsNative.Win32]::AttachThreadInput($thisThread, $foregroundThread, $true
         [void][CardsNative.Win32]::AttachThreadInput($thisThread, $foregroundThread, $false)
     }
 }
-if (Test-Focused) { 'method=attach'; exit 0 }
+if (Test-Focused) { 'method=attach'; Restore-TerminalFocus; exit 0 }
 exit 3

@@ -161,13 +161,16 @@ function startEditing(card, s) {
   };
   input.addEventListener('keydown', (e) => {
     e.stopPropagation();
+    // 输入法选词时的回车和 Esc 属于输入法，不是提交或取消
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter') finish(true);
     else if (e.key === 'Escape') finish(false);
   });
-  input.addEventListener('blur', () => finish(true));
   host.setEditing(true).then(() => {
     input.focus();
     input.select();
+    // 拿到焦点之后才监听失焦，切换窗口过程中的短暂失焦不算结束
+    input.addEventListener('blur', () => finish(true));
   });
 }
 
