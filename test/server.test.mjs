@@ -59,6 +59,16 @@ test('标题规范化', () => {
   assert.throws(() => normalizeTitle(42));
 });
 
+test('恢复会话时丢弃旧的进程链', () => {
+  const m = fresh();
+  applyEvent(m, e('Stop', 100));
+  applyEvent(m, { event: 'Origin', session_id: 'a1', chain: [{ pid: 12, name: 'claude.exe' }] });
+  assert.equal(m.get('a1').chain.length, 1);
+  applyEvent(m, e('SessionStart', 200));
+  assert.equal(m.get('a1').chain, null);
+  assert.equal(m.get('a1').state, 'done');
+});
+
 test('记录上一步，新一轮清空', () => {
   const m = fresh();
   applyEvent(m, e('PreToolUse', 100, { tool_name: 'Read', tool: 'Read: a.js' }));

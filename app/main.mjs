@@ -18,6 +18,9 @@ const MARGIN = 16;
 const DEFAULT_OFFSET_Y = 80;
 const TITLE_SCAN_BYTES = 4 * 1024 * 1024;
 const POINTER_POLL_MS = 200;
+const REOPEN_COOLDOWN_MS = 30_000;
+const ACTIVE_STATES = new Set(['thinking', 'working', 'waiting']);
+const ACTIVE_WINDOW_MS = 30 * 60 * 1000;
 const AUTOSTART_NAME = 'claude-session-cards';
 const HISTORY_SIZE = { width: 760, height: 680 };
 const THEMES = new Set(['system', 'dark', 'light']);
@@ -30,6 +33,8 @@ let tray = null;
 let server = null;
 let dragOrigin = null;
 let menuShift = null;
+const recentlyOpened = new Map();
+let editingReturnTo = null;
 let pinned = true;
 let appearance = { theme: 'system', opacity: 'standard' };
 let historyWin = null;
@@ -125,30 +130,65 @@ function sessionTitle(path) {
   return null;
 }
 
-/** Windows 的前台锁可能让 win.focus() 无效，所以用和跳转窗口相同的办法切到前台。 */
-function forceForeground() {
-  if (process.platform !== 'win32') return Promise.resolve();
-  const handle = win.getNativeWindowHandle();
-  const hwnd = handle.length >= 8 ? handle.readBigUInt64LE() : BigInt(handle.readUInt32LE());
+const hwndOf = (window) => {
+  const handle = window.getNativeWindowHandle();
+  return (handle.length >= 8 ? handle.readBigUInt64LE() : BigInt(handle.readUInt32LE())).toString();
+};
+
+/** 运行切换脚本，返回切换前的前台窗口句柄。 */
+function runFocusScript(env) {
   return new Promise((resolve) => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(HERE, 'focus-window.ps1')], { env: { ...process.env, CARDS_HWND: hwnd.toString(), CARDS_CHAIN: '' }, timeout: 5000, windowsHide: true }, () => resolve());
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(HERE, 'focus-window.ps1')], { env: { ...process.env, CARDS_CHAIN: '', ...env }, timeout: 5000, windowsHide: true }, (err, stdout) => {
+      resolve(String(stdout).match(/previous=(\d+)/)?.[1] ?? null);
+    });
   });
 }
 
-/** 返回 'focused' | 'no-window' | 'refused' | 'unsupported'。 */
-function focusSession(id) {
+/** 改标题要键盘焦点。Windows 的前台锁可能让 win.focus() 无效，所以走切换脚本，并记住原来的窗口。 */
+async function beginEditing() {
+  if (process.platform !== 'win32') {
+    win.setFocusable(true);
+    win.focus();
+    return;
+  }
+  // 必须最先读：setFocusable 和 focus 都可能改变前台窗口，之后就读不到原来的窗口了
+  const own = hwndOf(win);
+  const previous = await runFocusScript({ CARDS_QUERY: '1' });
+  if (previous && previous !== own) editingReturnTo = previous;
+  win.setFocusable(true);
+  await runFocusScript({ CARDS_HWND: own });
+}
+
+/** 把焦点还给改标题之前的窗口；用户已经点到别的程序时不抢回来。 */
+async function endEditing() {
+  const returnTo = editingReturnTo;
+  editingReturnTo = null;
+  if (!returnTo) {
+    win.blur();
+    win.setFocusable(false);
+    return;
+  }
+  // setFocusable(false) 会让系统把前台交给下一个窗口，所以要先判断、后恢复
+  const stillOurs = (await runFocusScript({ CARDS_QUERY: '1' })) === hwndOf(win);
+  win.setFocusable(false);
+  if (stillOurs) await runFocusScript({ CARDS_HWND: returnTo });
+}
+
+/** 切到会话所在的窗口。返回 'focused' | 'refused' | 'running'（在运行但找不到窗口）| 'closed'。 */
+function focusSession(id, title) {
   const session = server.getSession(id);
-  if (process.platform !== 'win32') return Promise.resolve('unsupported');
-  if (!session?.chain?.length) return Promise.resolve('no-window');
   const env = {
     ...process.env,
-    CARDS_CHAIN: session.chain.map((p) => `${p.pid}:${p.name}`).join(','),
-    CARDS_TITLE: sessionTitle(session.transcript) ?? '',
+    CARDS_CHAIN: (session?.chain ?? []).map((p) => `${p.pid}:${p.name}`).join(','),
+    CARDS_TITLE: title ?? '',
+    CARDS_SESSION: SESSION_ID_RE.test(id) ? id : '',
   };
   return new Promise((resolve) => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(HERE, 'focus-window.ps1')], { env, timeout: 10_000, windowsHide: true }, (err) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(HERE, 'focus-window.ps1')], { env, timeout: 15_000, windowsHide: true }, (err) => {
       if (!err) resolve('focused');
-      else resolve(err.code === 3 ? 'refused' : 'no-window');
+      else if (err.code === 3) resolve('refused');
+      else if (err.code === 4) resolve('running');
+      else resolve('closed');
     });
   });
 }
@@ -164,18 +204,26 @@ function openResumeTerminal(id, cwd) {
   wt.unref();
 }
 
-/** 返回 'opened' | 'focused' | 'no-dir' | 'not-found' | 'unsupported'。 */
-async function resumeSession(id) {
-  if (!SESSION_ID_RE.test(id)) return 'not-found';
-  // 会话还开着就切过去：同一个会话开两个进程，记录会分叉
-  if (server.getSession(id)?.chain?.length) {
-    const result = await focusSession(id);
-    if (result === 'focused' || result === 'refused') return 'focused';
-  }
+/**
+ * 会话开着就切过去，确实关了才新开标签恢复：同一个会话开两个进程，记录会分叉。
+ * 返回 'focused' | 'refused' | 'running' | 'opened' | 'no-dir' | 'not-found' | 'unsupported'。
+ */
+async function openSession(id) {
   if (process.platform !== 'win32') return 'unsupported';
-  const entry = (await scanHistory(claudeDir())).find((s) => s.id === id);
+  const session = server.getSession(id);
+  const hadChain = Boolean(session?.chain?.length);
+  const entry = SESSION_ID_RE.test(id) ? (await scanHistory(claudeDir())).find((s) => s.id === id) : undefined;
+  const result = await focusSession(id, sessionTitle(session?.transcript) ?? entry?.title);
+  if (result !== 'closed') return result;
+
+  if (session) session.chain = null; // 记录已失效，让 hook 下次重新上报
+  // 还没收到进程链又正在工作：可能只是上报慢了，宁可不开
+  if (!hadChain && session && ACTIVE_STATES.has(session.state) && Date.now() - session.updatedAt < ACTIVE_WINDOW_MS) return 'running';
   if (!entry) return 'not-found';
   if (!entry.cwd || !existsSync(entry.cwd)) return 'no-dir';
+  // 刚开的窗口要几秒才查得到，连点不能开出第二个
+  if (Date.now() - (recentlyOpened.get(id) ?? 0) < REOPEN_COOLDOWN_MS) return 'opened';
+  recentlyOpened.set(id, Date.now());
   openResumeTerminal(id, entry.cwd);
   return 'opened';
 }
@@ -250,17 +298,10 @@ function setupIpc() {
   ipcMain.on('open-history', (e) => {
     if (fromOurWindow(e)) openHistoryWindow();
   });
-  ipcMain.handle('resume-session', (e, id) => (fromHistory(e) ? resumeSession(String(id)) : 'not-found'));
+  ipcMain.handle('resume-session', (e, id) => (fromHistory(e) ? openSession(String(id)) : 'not-found'));
   // 平时不抢焦点；只有改标题时才需要键盘输入
-  ipcMain.handle('set-editing', async (e, on) => {
-    if (!fromOurWindow(e)) return;
-    win.setFocusable(on);
-    if (!on) {
-      win.blur();
-      return;
-    }
-    win.focus();
-    await forceForeground(); // isFocused() 在前台锁下仍可能返回 true，不能用来判断
+  ipcMain.handle('set-editing', (e, on) => {
+    if (fromOurWindow(e)) return on ? beginEditing() : endEditing();
   });
   ipcMain.handle('get-appearance', () => appearance);
   ipcMain.on('set-appearance', (e, value) => {
@@ -276,7 +317,7 @@ function setupIpc() {
   ipcMain.on('set-pinned', (e, on) => {
     if (fromOurWindow(e)) setPinned(on === true);
   });
-  ipcMain.handle('focus-session', (e, id) => (fromOurWindow(e) ? focusSession(String(id)) : 'no-window'));
+  ipcMain.handle('focus-session', (e, id) => (fromOurWindow(e) ? openSession(String(id)) : 'not-found'));
   ipcMain.on('interactive', (e, on) => {
     if (fromOurWindow(e)) setClickThrough(!on);
   });

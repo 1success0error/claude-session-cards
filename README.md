@@ -23,10 +23,10 @@
 
 ## 安装
 
-需要 Node.js 22.12 或更高版本、Git，以及较新的 Claude Code（已在 2.1.318 上使用）。目前还没有发布到 npm，请从 GitHub 安装，不需要配置 SSH 密钥：
+需要 Node.js 22.12 或更高版本，以及较新的 Claude Code（已在 2.1.318 上使用）。
 
 ```sh
-npm install -g github:RandomBinaryTree/claude-session-cards
+npm install -g claude-session-cards
 claude-session-cards install   # 把 hook 合并进 ~/.claude/settings.json，原文件会备份
 claude-session-cards start     # 首次启动会下载 Electron
 ```
@@ -51,7 +51,7 @@ Electron 下载慢或失败时，可以设置 `ELECTRON_MIRROR` 后重试，或�
 
 - 拖动顶部状态条移动位置，点箭头收起。
 - 一轮结束或出错时卡片会闪烁提示，单击卡片确认后恢复；收起时状态条也会提示。
-- 双击卡片跳转到对应的终端窗口。Windows Terminal 会同时切到对应标签页；其他平台暂不支持跳转，改为复制恢复命令。
+- 双击卡片跳转到对应的终端窗口，Windows Terminal 会同时切到对应标签页。窗口已经关闭时，会在新标签页恢复这个会话；还在运行却找不到窗口时只提示，不会开第二个。其他平台暂不支持，改为复制恢复命令。
 - 卡片显示会话标题，可以右键“修改标题”，留空恢复自动标题。改过的标题只保存在本工具里，同样显示在历史列表中，不改变 Claude Code 自己的记录和终端标签名。
 - 右键卡片可以复制恢复命令或会话 ID、移除卡片，以及切换窗口置顶。
 - 右键卡片或状态条可以切换外观（跟随系统、深色、浅色）和卡片透明度。

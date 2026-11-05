@@ -1,6 +1,6 @@
 {
   "name": "claude-session-cards",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Always-on-top status cards for all your Claude Code sessions, driven by Claude Code hooks.",
   "license": "MIT",
   "author": "RandomBinaryTree",
@@ -9,7 +9,6 @@
     "url": "git+https://github.com/RandomBinaryTree/claude-session-cards.git"
   },
   "homepage": "https://github.com/RandomBinaryTree/claude-session-cards#readme",
-  "private": true,
   "type": "module",
   "main": "app/main.mjs",
   "bin": {

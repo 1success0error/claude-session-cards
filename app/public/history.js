@@ -42,6 +42,8 @@ async function resume(s) {
   const result = await host.resumeSession(s.id);
   if (result === 'opened') setSummary(`已在新标签页恢复：${s.title ?? s.id}`);
   else if (result === 'focused') setSummary(`这个会话还开着，已切换到它的窗口：${s.title ?? s.id}`);
+  else if (result === 'running') setSummary(`这个会话还在运行，但找不到它的窗口，为避免冲突没有新开：${s.title ?? s.id}`, true);
+  else if (result === 'refused') setSummary('系统拦截了窗口切换，请手动切换', true);
   else if (result === 'no-dir') setSummary(`目录已不存在，无法恢复：${s.cwd ?? '未知目录'}`, true);
   else if (result === 'unsupported') copyText(resumeCommand(s), '恢复命令');
   else setSummary('找不到这个会话，可能已被清理，请刷新', true);

@@ -115,9 +115,12 @@ async function jumpToWindow(card, s) {
   notice(card, '正在跳转…', 0);
   const result = await host.focusSession(s.id);
   if (result === 'focused') delete card.dataset.notice;
+  else if (result === 'opened') notice(card, '已在新标签页恢复');
   else if (result === 'unsupported') copyResume(card, s);
   else if (result === 'refused') notice(card, '系统拦截了窗口切换，请手动切换');
-  else notice(card, '找不到对应窗口，可右键复制恢复命令');
+  else if (result === 'running') notice(card, '会话还在运行，但找不到它的窗口');
+  else if (result === 'no-dir') notice(card, '目录已不存在，无法恢复');
+  else notice(card, '找不到这个会话的记录');
 }
 
 function acknowledge(card, s) {
@@ -171,7 +174,7 @@ function startEditing(card, s) {
 function buildCard({ s, state }) {
   const card = el('article', `card ${state}`);
   card.dataset.id = s.id;
-  const hint = host ? '单击确认完成提示，双击跳转到窗口，右键更多操作' : '点击复制恢复命令';
+  const hint = host ? '单击确认完成提示，双击跳转到窗口（已关闭则重新打开），右键更多操作' : '点击复制恢复命令';
   setTip(card, [s.title, s.cwd, s.task, s.tool, s.prevTool && `上一步：${s.prevTool}`, hint].filter(Boolean).join('\n'));
 
   const head = el('div', 'head');
