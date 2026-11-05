@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { scanHistory } from '../lib/history.mjs';
+import { readSessionMeta, scanHistory } from '../lib/history.mjs';
 
 const ID = (n) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
 const user = (content, extra = {}) => ({ type: 'user', cwd: '/work/shop', message: { role: 'user', content }, ...extra });
@@ -90,6 +90,17 @@ test('按修改时间倒序；文件变化后缓存失效', async () => {
   const rows = await scanHistory(root);
   assert.equal(rows[0].id, ID(1));
   assert.equal(rows[0].title, '更新了');
+});
+
+test('读取最后实际使用的模型，跳过 synthetic', async () => {
+  const root = config();
+  const assistant = (model) => ({ type: 'assistant', message: { model } });
+  const path = write(root, 'p', `${ID(1)}.jsonl`, [assistant('claude-opus-5-5'), assistant('claude-sonnet-5-5'), assistant('<synthetic>'), { type: 'ai-title', aiTitle: '标题' }]);
+  assert.deepEqual(await readSessionMeta(path), { title: '标题', model: 'claude-sonnet-5-5' });
+});
+
+test('读不到记录时返回空值', async () => {
+  assert.deepEqual(await readSessionMeta(join(config(), 'missing.jsonl')), { title: null, model: null });
 });
 
 test('没有 projects 目录时返回空', async () => {

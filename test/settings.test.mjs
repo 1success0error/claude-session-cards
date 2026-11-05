@@ -57,6 +57,30 @@ test('同一组里混有别人的 hook 时只删自己的', () => {
   assert.deepEqual(read(d).hooks.Stop[0].hooks.map((h) => h.command), ['echo other']);
 });
 
+test('配置状态栏；已有别的状态栏时不覆盖', () => {
+  const d = dir();
+  assert.equal(install(d).statusLine, true);
+  assert.match(read(d).statusLine.command, /claude-session-cards-statusline\.mjs/);
+  assert.ok(existsSync(join(d, 'hooks', 'claude-session-cards-statusline.mjs')));
+  assert.equal(install(d).statusLine, true);
+
+  const other = dir();
+  const mine = { type: 'command', command: 'my-status' };
+  writeFileSync(join(other, 'settings.json'), JSON.stringify({ statusLine: mine }));
+  assert.equal(install(other).statusLine, false);
+  assert.deepEqual(read(other).statusLine, mine);
+  uninstall(other);
+  assert.deepEqual(read(other).statusLine, mine);
+});
+
+test('卸载时移除自己的状态栏和脚本', () => {
+  const d = dir();
+  install(d);
+  uninstall(d);
+  assert.equal(read(d).statusLine, undefined);
+  assert.equal(existsSync(join(d, 'hooks', 'claude-session-cards-statusline.mjs')), false);
+});
+
 test('配置文件损坏时拒绝修改', () => {
   const d = dir();
   writeFileSync(join(d, 'settings.json'), '{ broken');

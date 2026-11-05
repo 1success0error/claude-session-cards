@@ -15,6 +15,8 @@ let sessions = [];
 let clockOffset = 0;
 let hostPlatform = 'win32';
 let editingId = null;
+let usageTotals = null;
+let usageLimits = null;
 const cardNodes = new Map(); // 会话 ID -> { signature, node }
 
 if (host) document.documentElement.classList.add('overlay');
@@ -84,12 +86,18 @@ function hideTip() {
   reportSize();
 }
 
+/** 窗口顶部到屏幕底部的距离，换算成页面坐标。 */
+function screenRoomBelow() {
+  const factor = (host && SCALE[appearance.size]) || 1;
+  return (window.screen.availTop + window.screen.availHeight - window.screenY) / factor;
+}
+
 function showTip(target) {
   if (!target.isConnected || editingId || !$('menu').hidden) return;
   tipEl.textContent = target.dataset.tip;
   tipEl.hidden = false;
   const rect = target.getBoundingClientRect();
-  const available = window.screen.availTop + window.screen.availHeight - window.screenY - 8;
+  const available = screenRoomBelow() - 8;
   const height = tipEl.offsetHeight;
   const below = rect.bottom + 4;
   tipEl.style.top = `${below + height <= available ? below : Math.max(4, rect.top - height - 4)}px`;
@@ -174,6 +182,14 @@ function startEditing(card, s) {
   });
 }
 
+/** claude-opus-5-5 -> Opus 5.5；认不出的原样显示。 */
+function modelName(model) {
+  const match = model?.match(/^claude-([a-z]+)-(\d{1,2})(?:-(\d{1,2}))?(?:-|$)/);
+  if (!match) return model ?? null;
+  const name = match[1][0].toUpperCase() + match[1].slice(1);
+  return `${name} ${match[2]}${match[3] ? `.${match[3]}` : ''}`;
+}
+
 function buildCard({ s, state }) {
   const card = el('article', `card ${state}`);
   card.dataset.id = s.id;
@@ -187,7 +203,9 @@ function buildCard({ s, state }) {
   status.append(el('span', 'dot'), LABEL[state] ?? state);
   head.append(heading, status);
   card.append(head);
-  if (s.title) card.append(el('div', 'sub', `${s.project} · ${s.id.slice(0, 4)}`));
+  const model = modelName(s.model);
+  const sub = s.title ? [s.project, s.id.slice(0, 4), model] : [model];
+  if (sub.some(Boolean)) card.append(el('div', 'sub', sub.filter(Boolean).join(' · ')));
 
   if (s.task) card.append(el('div', 'line task', s.task));
   if (s.tool) card.append(el('div', 'line tool', s.tool));
@@ -268,7 +286,7 @@ function renderCards(items) {
   }
   const nodes = items.map((item) => {
     const { s, state } = item;
-    const signature = JSON.stringify([state, s.title, s.project, s.task, s.tool, s.prevTool, s.todos, s.cwd]);
+    const signature = JSON.stringify([state, s.title, s.model, s.project, s.task, s.tool, s.prevTool, s.todos, s.cwd]);
     let entry = cardNodes.get(s.id);
     if (!entry || (entry.signature !== signature && editingId !== s.id)) {
       entry = { signature, node: buildCard(item) };
@@ -313,6 +331,55 @@ function render() {
   reportSize();
 }
 
+function tokenText(value) {
+  if (value >= 1e8) return `${(value / 1e8).toFixed(2)}亿`;
+  if (value >= 1e4) return `${Math.round(value / 1e4)}万`;
+  return String(value);
+}
+
+function resetText(at) {
+  if (!at) return '';
+  const date = new Date(at);
+  const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const time = date.toTimeString().slice(0, 5);
+  return date.toDateString() === new Date().toDateString() ? `今天 ${time}` : `${days[date.getDay()]} ${time}`;
+}
+
+function renderUsage() {
+  const box = $('usage');
+  const shown = appearance.usage;
+  const totalsTip = (name, t) => [
+    `${name}：${t.total.toLocaleString()}（输入 + 输出 + 写入缓存）`,
+    `输入 ${t.input.toLocaleString()}`,
+    `输出 ${t.output.toLocaleString()}`,
+    `写入缓存 ${t.cacheWrite.toLocaleString()}`,
+    `读取缓存 ${t.cacheRead.toLocaleString()}（不计入）`,
+    '只统计这台电脑上的记录',
+  ].join('\n');
+  const limitTip = (name, window) => [
+    `${name}已用 ${window.percent}%`,
+    window.resetsAt && `${resetText(window.resetsAt)} 重置`,
+    usageLimits?.updatedAt && `数据更新于 ${new Date(usageLimits.updatedAt).toLocaleTimeString()}`,
+  ].filter(Boolean).join('\n');
+  const items = [];
+  if (shown.today && usageTotals) items.push([`今日 ${tokenText(usageTotals.today.total)}`, totalsTip('今日', usageTotals.today)]);
+  if (shown.week && usageTotals) items.push([`本周 ${tokenText(usageTotals.week.total)}`, totalsTip('本周（周一起）', usageTotals.week)]);
+  for (const [key, short, name] of [['fiveHour', '5h', '5 小时限额'], ['sevenDay', '7天', '7 天限额']]) {
+    const window = usageLimits?.[key];
+    if (!shown[key] || !window) continue;
+    const level = window.percent >= 95 ? 'danger' : window.percent >= 80 ? 'warn' : '';
+    items.push([`${short} ${Math.round(window.percent)}%`, limitTip(name, window), level]);
+  }
+  box.replaceChildren(...items.map(([text, tip, level]) => {
+    const node = el('span', level ?? '', text);
+    setTip(node, tip);
+    return node;
+  }));
+  box.hidden = items.length === 0;
+  $('bar').classList.toggle('has-usage', items.length > 0);
+  reportSize();
+}
+
 function setCollapsed(on) {
   document.body.classList.toggle('collapsed', on);
   try { localStorage.setItem('collapsed', on ? '1' : ''); } catch {}
@@ -333,6 +400,9 @@ function connect() {
     clockOffset = data.now - Date.now();
     hostPlatform = data.platform;
     sessions = data.sessions;
+    usageTotals = data.usage;
+    usageLimits = data.limits;
+    renderUsage();
     render();
   };
 }
@@ -390,7 +460,7 @@ if (host) {
     if (target) tipTimer = setTimeout(() => showTip(target), TIP_DELAY_MS);
   });
   cardsEl.addEventListener('scroll', hideTip);
-  for (const id of ['history', 'toggle']) {
+  for (const id of ['new', 'history', 'toggle']) {
     const button = $(id);
     setTip(button, button.title);
     button.removeAttribute('title');
@@ -428,13 +498,17 @@ function closeMenu() {
   reportSize();
 }
 
+const USAGE_ITEMS = [['today', '今日用量'], ['week', '本周用量'], ['fiveHour', '5 小时限额'], ['sevenDay', '7 天限额']];
+const SIZES = [['small', '小'], ['standard', '标准'], ['large', '大']];
+const SCALE = { small: 0.85, standard: 1, large: 1.2 };
 const THEMES = [['system', '跟随系统'], ['dark', '深色'], ['light', '浅色']];
 const OPACITIES = [['opaque', '不透明'], ['standard', '标准'], ['translucent', '较透明']];
-let appearance = { theme: 'system', opacity: 'standard' };
+let appearance = { theme: 'system', opacity: 'standard', size: 'standard', usage: { today: true, week: true, fiveHour: true, sevenDay: true } };
 
 function applyAppearance(next) {
   appearance = next;
   document.documentElement.dataset.opacity = appearance.opacity;
+  renderUsage();
 }
 
 function renderMenu(entries, x, y) {
@@ -454,7 +528,7 @@ function renderMenu(entries, x, y) {
   menu.hidden = false;
   menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - menu.offsetWidth - 4))}px`;
   // 优先往上收；窗口本身离底部太近时，由主进程临时上移窗口
-  const available = window.screen.availTop + window.screen.availHeight - window.screenY;
+  const available = screenRoomBelow();
   menu.style.top = `${Math.max(4, Math.min(y, available - menu.offsetHeight - 12))}px`;
   reportSize();
 }
@@ -484,12 +558,56 @@ async function openMenu(e, items) {
       ...(autostart === null ? [] : [{ label: `${autostart ? '✓ ' : ''}开机自启`, action: () => host.setAutostart(!autostart) }]),
       submenu('外观', THEMES, 'theme'),
       submenu('透明度', OPACITIES, 'opacity'),
+      submenu('大小', SIZES, 'size'),
+      {
+        label: '用量显示 ▸',
+        stay: true,
+        action: function usageMenu() {
+          renderMenu([
+            { label: '‹ 返回', stay: true, action: main },
+            ...USAGE_ITEMS.map(([key, name], index) => ({
+              label: `${appearance.usage[key] ? '✓ ' : ''}${name}`,
+              stay: true,
+              separated: index === 0,
+              action: () => {
+                applyAppearance({ ...appearance, usage: { ...appearance.usage, [key]: !appearance.usage[key] } });
+                host.setAppearance(appearance);
+                usageMenu();
+              },
+            })),
+          ], x, y);
+        },
+      },
     ], x, y);
   };
   main();
 }
 
 if (host) host.getAppearance().then(applyAppearance);
+
+// 同名目录要带上上级才分得清
+function dirLabels(dirs) {
+  const parts = dirs.map((dir) => dir.replace(/[\\/]+$/, '').split(/[\\/]/));
+  const name = (p) => p.at(-1) || p.join('/');
+  return parts.map((p) => {
+    const same = parts.filter((other) => name(other) === name(p)).length > 1;
+    return same && p.length > 1 ? `${p.at(-2)}/${name(p)}` : name(p);
+  });
+}
+
+if (host) {
+  host.recentDirs().then((dirs) => { $('new').hidden = dirs === null; });
+  $('new').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const { clientX: x, clientY: y } = e;
+    const dirs = (await host.recentDirs()) ?? [];
+    const labels = dirLabels(dirs);
+    renderMenu([
+      ...dirs.map((dir, index) => ({ label: labels[index], action: () => host.newSession(dir) })),
+      { label: '选择其他目录…', action: () => host.pickDirectory(), separated: dirs.length > 0 },
+    ], x, y);
+  });
+}
 
 if (host) {
   $('bar').addEventListener('contextmenu', (e) => {

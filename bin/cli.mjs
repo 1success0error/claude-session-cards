@@ -123,8 +123,9 @@ const flags = new Set(rest);
 try {
   switch (command) {
     case 'install': {
-      const file = install(claudeDir(), { dshPet: flags.has('--dsh-pet') });
+      const { file, statusLine } = install(claudeDir(), { dshPet: flags.has('--dsh-pet') });
       console.log(`已写入 ${file}（原文件备份为 settings.json.bak-claude-session-cards）`);
+      console.log(statusLine ? '已配置状态栏，用于读取套餐限额。' : '你已经配置了别的状态栏，没有覆盖；Token 用量正常显示，但读不到套餐限额。');
       console.log('已打开的 Claude Code 会话需要重启，或打开一次 /hooks 才会加载。');
       break;
     }

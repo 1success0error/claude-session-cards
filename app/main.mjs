@@ -1,6 +1,6 @@
 // 桌面置顶卡片窗口：透明、不占任务栏、不抢焦点、卡片以外点击穿透。
 // 只在创建窗口和手动「显示」时置顶，不做定时重新置顶：那样会打断全屏游戏和截图。
-import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, nativeTheme, screen, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, screen, Tray } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -16,11 +16,13 @@ removeSessionVariables();
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WINDOW_FILE = join(dataDir(), 'window.json');
-const WIDTH = 320;
+const WIDTH = 360;
+const SIZES = { small: 0.85, standard: 1, large: 1.2 };
 const MARGIN = 16;
 const DEFAULT_OFFSET_Y = 80;
 const TITLE_SCAN_BYTES = 4 * 1024 * 1024;
 const POINTER_POLL_MS = 200;
+const RECENT_DIRS_MAX = 8;
 const REOPEN_COOLDOWN_MS = 30_000;
 const ACTIVE_STATES = new Set(['thinking', 'working', 'waiting']);
 const ACTIVE_WINDOW_MS = 30 * 60 * 1000;
@@ -36,14 +38,20 @@ let tray = null;
 let server = null;
 let dragOrigin = null;
 let menuShift = null;
+let contentHeight = 40;
+let offeredDirs = new Set();
 const recentlyOpened = new Map();
 let editingReturnTo = null;
 let pinned = true;
-let appearance = { theme: 'system', opacity: 'standard' };
+let appearance = { theme: 'system', opacity: 'standard', size: 'standard', usage: { today: true, week: true, fiveHour: true, sevenDay: true } };
 let historyWin = null;
 
 /** 主题交给 nativeTheme：所有窗口的 prefers-color-scheme 都跟着变。 */
-function setAppearance({ theme, opacity }) {
+function setAppearance({ theme, opacity, size, usage }) {
+  if (Object.hasOwn(SIZES, size)) appearance.size = size;
+  for (const key of Object.keys(appearance.usage)) {
+    if (typeof usage?.[key] === 'boolean') appearance.usage[key] = usage[key];
+  }
   if (THEMES.has(theme)) appearance.theme = theme;
   if (OPACITIES.has(opacity)) appearance.opacity = opacity;
   nativeTheme.themeSource = appearance.theme;
@@ -51,9 +59,9 @@ function setAppearance({ theme, opacity }) {
 
 function loadPosition() {
   try {
-    const { x, y, pinned: savedPinned, theme, opacity } = JSON.parse(readFileSync(WINDOW_FILE, 'utf8'));
+    const { x, y, pinned: savedPinned, theme, opacity, size, usage } = JSON.parse(readFileSync(WINDOW_FILE, 'utf8'));
     if (typeof savedPinned === 'boolean') pinned = savedPinned;
-    setAppearance({ theme, opacity });
+    setAppearance({ theme, opacity, size, usage });
     if (Number.isInteger(x) && Number.isInteger(y)) {
       // 显示器可能已拔掉：位置不在任何屏幕内就回到默认
       const area = screen.getDisplayNearestPoint({ x, y }).workArea;
@@ -62,6 +70,18 @@ function loadPosition() {
   } catch {}
   const area = screen.getPrimaryDisplay().workArea;
   return { x: area.x + MARGIN, y: area.y + DEFAULT_OFFSET_Y };
+}
+
+const scale = () => SIZES[appearance.size];
+const scaledWidth = () => Math.round(WIDTH * scale());
+
+/** 缩放整个页面。窗口大小要跟着变，高度按最后一次上报的内容高度换算。 */
+function applySize() {
+  win.webContents.setZoomFactor(scale());
+  const b = win.getBounds();
+  const area = screen.getDisplayMatching(b).workArea;
+  const wanted = Math.max(30, Math.ceil(contentHeight * scale()));
+  win.setBounds({ x: b.x, y: b.y, width: scaledWidth(), height: Math.min(Math.max(60, area.y + area.height - MARGIN - b.y), wanted) });
 }
 
 function savePosition() {
@@ -86,7 +106,7 @@ function pinOnTop() {
 function createWindow() {
   const { x, y } = loadPosition();
   win = new BrowserWindow({
-    x, y, width: WIDTH, height: 40,
+    x, y, width: scaledWidth(), height: 40,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -107,12 +127,14 @@ function createWindow() {
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.once('ready-to-show', () => win.showInactive());
   win.on('closed', () => { win = null; });
-  win.loadURL(`http://127.0.0.1:${server.port}/`);
+  win.webContents.on('did-finish-load', applySize);
+  // 用 localhost：Chromium 的缩放按来源生效，这样不会连带放大 127.0.0.1 上的历史窗口
+  win.loadURL(`http://localhost:${server.port}/`);
 }
 
-/** 从 transcript 末尾取会话标题（手动命名优先），用来匹配 Windows Terminal 的标签。 */
-function sessionTitle(path) {
-  if (typeof path !== 'string' || !path.endsWith('.jsonl')) return null;
+/** 从 transcript 末尾取会话的所有标题。改名后运行中的终端标签可能还是旧标题，所以都用来匹配。 */
+function sessionTitles(path) {
+  if (typeof path !== 'string' || !path.endsWith('.jsonl')) return [];
   let fd;
   try {
     fd = openSync(path, 'r');
@@ -121,16 +143,17 @@ function sessionTitle(path) {
     const buf = Buffer.alloc(length);
     readSync(fd, buf, 0, length, size - length);
     const text = buf.toString('utf8');
+    const found = [];
     for (const key of ['customTitle', 'aiTitle']) {
       const matches = [...text.matchAll(new RegExp(`"${key}":("(?:[^"\\\\]|\\\\.)*")`, 'g'))];
-      if (matches.length) return JSON.parse(matches.at(-1)[1]);
+      if (matches.length) found.push(JSON.parse(matches.at(-1)[1]));
     }
+    return found;
   } catch {
-    // 标题只影响能否选中标签页，读不到就只切窗口
+    return []; // 读不到只影响能否选中标签页
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
-  return null;
 }
 
 const hwndOf = (window) => {
@@ -178,12 +201,12 @@ async function endEditing() {
 }
 
 /** 切到会话所在的窗口。返回 'focused' | 'refused' | 'running'（在运行但找不到窗口）| 'closed'。 */
-function focusSession(id, title) {
+function focusSession(id, titles) {
   const session = server.getSession(id);
   const env = {
     ...process.env,
     CARDS_CHAIN: (session?.chain ?? []).map((p) => `${p.pid}:${p.name}`).join(','),
-    CARDS_TITLE: title ?? '',
+    CARDS_TITLE: titles.join('\n'),
     CARDS_SESSION: SESSION_ID_RE.test(id) ? id : '',
   };
   return new Promise((resolve) => {
@@ -196,15 +219,41 @@ function focusSession(id, title) {
   });
 }
 
-/** 在新的 Windows Terminal 标签页恢复；没有 Windows Terminal 时开普通控制台。 */
-function openResumeTerminal(id, cwd) {
-  // id 已按 UUID 校验过，可以放进命令行
-  const shell = ['powershell.exe', '-NoExit', '-Command', `claude --resume ${id}`];
+/** 在新的 Windows Terminal 标签页运行命令；没有 Windows Terminal 时开普通控制台。 */
+function openTerminal(cwd, command) {
+  const shell = ['powershell.exe', '-NoExit', '-Command', command];
   const wt = spawn('wt.exe', ['-w', '0', 'new-tab', '-d', cwd.replaceAll(';', '\\;'), ...shell], { detached: true, stdio: 'ignore', windowsHide: false });
   wt.on('error', () => {
     spawn('cmd.exe', ['/c', 'start', '""', '/D', cwd, ...shell], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
   });
   wt.unref();
+}
+
+/** 最近用过的目录，最近的在前；已删除的不显示。只支持 Windows，其他平台返回 null。 */
+async function recentDirs() {
+  if (process.platform !== 'win32') return null;
+  const dirs = [];
+  const seen = new Set();
+  for (const { cwd } of await scanHistory(claudeDir())) {
+    const key = cwd?.toLowerCase();
+    if (!cwd || seen.has(key)) continue;
+    seen.add(key);
+    if (existsSync(cwd)) dirs.push(cwd);
+    if (dirs.length >= RECENT_DIRS_MAX) break;
+  }
+  offeredDirs = new Set(dirs);
+  return dirs;
+}
+
+/** 只接受刚列给用户的目录，页面不能让主进程在任意路径启动程序。 */
+function newSession(cwd) {
+  if (process.platform === 'win32' && offeredDirs.has(cwd) && existsSync(cwd)) openTerminal(cwd, 'claude');
+}
+
+async function pickDirectoryAndOpen() {
+  if (process.platform !== 'win32') return;
+  const { canceled, filePaths } = await dialog.showOpenDialog({ title: '选择新会话的目录', properties: ['openDirectory'] });
+  if (!canceled && filePaths[0]) openTerminal(filePaths[0], 'claude');
 }
 
 /**
@@ -216,7 +265,7 @@ async function openSession(id) {
   const session = server.getSession(id);
   const hadChain = Boolean(session?.chain?.length);
   const entry = SESSION_ID_RE.test(id) ? (await scanHistory(claudeDir())).find((s) => s.id === id) : undefined;
-  const result = await focusSession(id, sessionTitle(session?.transcript) ?? entry?.title);
+  const result = await focusSession(id, [...new Set([...sessionTitles(session?.transcript), entry?.title].filter(Boolean))]);
   if (result !== 'closed') return result;
 
   if (session) session.chain = null; // 记录已失效，让 hook 下次重新上报
@@ -227,7 +276,7 @@ async function openSession(id) {
   // 刚开的窗口要几秒才查得到，连点不能开出第二个
   if (Date.now() - (recentlyOpened.get(id) ?? 0) < REOPEN_COOLDOWN_MS) return 'opened';
   recentlyOpened.set(id, Date.now());
-  openResumeTerminal(id, entry.cwd);
+  openTerminal(entry.cwd, `claude --resume ${id}`); // id 已按 UUID 校验过
   return 'opened';
 }
 
@@ -309,7 +358,15 @@ function setupIpc() {
   ipcMain.on('set-appearance', (e, value) => {
     if (!fromOurWindow(e)) return;
     setAppearance(value ?? {});
+    applySize();
     savePosition();
+  });
+  ipcMain.handle('recent-dirs', (e) => (fromOurWindow(e) ? recentDirs() : null));
+  ipcMain.on('new-session', (e, cwd) => {
+    if (fromOurWindow(e)) newSession(String(cwd));
+  });
+  ipcMain.on('pick-directory', (e) => {
+    if (fromOurWindow(e)) pickDirectoryAndOpen();
   });
   ipcMain.handle('get-autostart', () => isAutostartEnabled());
   ipcMain.on('set-autostart', (e, on) => {
@@ -327,7 +384,8 @@ function setupIpc() {
     if (!fromOurWindow(e) || !Number.isFinite(height)) return;
     const b = win.getBounds();
     const area = screen.getDisplayMatching(b).workArea;
-    const wanted = Math.max(30, Math.ceil(height));
+    contentHeight = height;
+    const wanted = Math.max(30, Math.ceil(height * scale()));
     const bottom = area.y + area.height - MARGIN;
     let y = b.y;
     if (menuOpen && y + wanted > bottom) {
@@ -338,7 +396,7 @@ function setupIpc() {
       y = menuShift;
       menuShift = null;
     }
-    win.setBounds({ x: b.x, y, width: WIDTH, height: Math.min(Math.max(60, bottom - y), wanted) });
+    win.setBounds({ x: b.x, y, width: scaledWidth(), height: Math.min(Math.max(60, bottom - y), wanted) });
   });
   ipcMain.on('drag-start', (e) => {
     if (fromOurWindow(e)) dragOrigin = win.getBounds();

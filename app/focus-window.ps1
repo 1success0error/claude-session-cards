@@ -2,7 +2,7 @@
 # Windows Terminal tab when the tab title matches the session title.
 # Input comes from the environment so no value is ever parsed as a command line:
 #   CARDS_CHAIN  pid:name pairs from the claude process upward, comma separated
-#   CARDS_TITLE  session title, optional
+#   CARDS_TITLE  session titles, one per line, optional
 #   CARDS_HWND   window handle to focus directly, instead of searching CARDS_CHAIN
 #   CARDS_QUERY  only report the current foreground window
 #   CARDS_SESSION  session ID, used to find a resumed session by its command line
@@ -31,6 +31,12 @@ $target = $null
 $hwnd = [IntPtr]::Zero
 if ($env:CARDS_HWND) { $hwnd = [IntPtr]::new([long]$env:CARDS_HWND) }
 $running = $false
+
+$titles = @(($env:CARDS_TITLE -split "`n") | Where-Object { $_ })
+function Test-TabTitle([string]$name) {
+    foreach ($title in $titles) { if ($name.Contains($title)) { return $true } }
+    return $false
+}
 
 function Find-Window([int]$processId) {
     $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
@@ -87,7 +93,7 @@ if (-not $target -and $env:CARDS_TITLE) {
         if ($terminal.MainWindowHandle -eq [IntPtr]::Zero) { continue }
         $root = [Windows.Automation.AutomationElement]::FromHandle($terminal.MainWindowHandle)
         foreach ($tab in $root.FindAll([Windows.Automation.TreeScope]::Descendants, $isTab)) {
-            if ($tab.Current.Name.Contains($env:CARDS_TITLE)) { $target = $terminal; $running = $true; break }
+            if (Test-TabTitle $tab.Current.Name) { $target = $terminal; $running = $true; break }
         }
         if ($target) { break }
     }
@@ -105,7 +111,7 @@ if ($env:CARDS_TITLE -and $target -and $target.ProcessName -eq 'WindowsTerminal'
         $isTab = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::TabItem)
         foreach ($tab in $root.FindAll([Windows.Automation.TreeScope]::Descendants, $isTab)) {
             # Claude Code prefixes the title with a spinner character, so match on containment.
-            if ($tab.Current.Name.Contains($env:CARDS_TITLE)) {
+            if (Test-TabTitle $tab.Current.Name) {
                 # Selecting a tab that is already selected moves keyboard focus onto the tab header.
                 $selection = $tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)
                 if (-not $selection.Current.IsSelected) { $selection.Select() }
