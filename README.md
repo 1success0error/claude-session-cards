@@ -4,13 +4,15 @@
 
 ## 安装
 
-需要 Node.js 22.12 或更高版本，以及较新的 Claude Code（已在 2.1.318 上使用）。
+需要 Node.js 22.12 或更高版本、Git，以及较新的 Claude Code（已在 2.1.318 上使用）。目前还没有发布到 npm，请从 GitHub 安装，不需要配置 SSH 密钥：
 
 ```sh
-npm install -g claude-session-cards
+npm install -g github:RandomBinaryTree/claude-session-cards
 claude-session-cards install   # 把 hook 合并进 ~/.claude/settings.json，原文件会备份
 claude-session-cards start     # 首次启动会下载 Electron
 ```
+
+以后升级重新运行第一条命令即可。
 
 已经打开的 Claude Code 会话需要重启，或打开一次 `/hooks` 才会加载 hook。
 
