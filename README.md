@@ -2,6 +2,25 @@
 
 用置顶小卡片查看所有 Claude Code 会话的状态：思考中、执行中、等你确认、已完成、出错。状态来自 Claude Code hooks，不依赖其他工具。
 
+<table>
+  <tr>
+    <td width="38%" align="center"><img src="docs/images/cards-dark.png" alt="深色卡片：等你确认、已完成提示、执行中和思考中的会话"></td>
+    <td width="38%" align="center"><img src="docs/images/cards-light-menu.png" alt="浅色卡片和右键菜单"></td>
+  </tr>
+  <tr>
+    <td align="center">各会话的状态一目了然，完成时会提示</td>
+    <td align="center">支持深浅主题，右键修改标题、切换置顶</td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/images/history.png" alt="历史会话窗口" width="640"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">搜索历史会话，点击在新标签页恢复</td>
+  </tr>
+</table>
+
+截图中的项目和对话均为示例数据。
+
 ## 安装
 
 需要 Node.js 22.12 或更高版本、Git，以及较新的 Claude Code（已在 2.1.318 上使用）。目前还没有发布到 npm，请从 GitHub 安装，不需要配置 SSH 密钥：
