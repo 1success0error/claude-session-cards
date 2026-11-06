@@ -193,8 +193,6 @@ function modelName(model) {
 function buildCard({ s, state }) {
   const card = el('article', `card ${state}`);
   card.dataset.id = s.id;
-  const hint = host ? '单击确认完成提示，双击跳转到窗口（已关闭则重新打开），右键更多操作' : '点击复制恢复命令';
-  setTip(card, [s.title, s.cwd, s.task, s.tool, s.prevTool && `上一步：${s.prevTool}`, hint].filter(Boolean).join('\n'));
 
   const head = el('div', 'head');
   const heading = el('div', 'project', s.title ?? s.project);
