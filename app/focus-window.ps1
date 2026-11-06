@@ -6,6 +6,7 @@
 #   CARDS_HWND   window handle to focus directly, instead of searching CARDS_CHAIN
 #   CARDS_QUERY  only report the current foreground window
 #   CARDS_SESSION  session ID, used to find a resumed session by its command line
+#   CARDS_DRY_RUN  report the window and tab that would be used, without switching
 # Exit codes: 0 focused, 2 session is not running, 3 Windows refused the focus change,
 #             4 session is running but has no window we can find.
 $ErrorActionPreference = 'Stop'
@@ -23,6 +24,28 @@ Add-Type -Namespace CardsNative -Name Win32 -MemberDefinition @'
 [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
 '@
 
+# Windows Terminal runs every window in one process, and MainWindowHandle is only whichever
+# window was active last. Tabs have to be searched in all of them.
+Add-Type -Namespace CardsNative -Name Windows -UsingNamespace System.Collections.Generic, System.Text -MemberDefinition @'
+public delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+[DllImport("user32.dll")] static extern bool EnumWindows(EnumProc callback, IntPtr lParam);
+[DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out int processId);
+[DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hWnd, StringBuilder name, int size);
+public static List<IntPtr> TerminalWindows(int processId) {
+    var found = new List<IntPtr>();
+    EnumWindows((hWnd, _) => {
+        int owner;
+        GetWindowThreadProcessId(hWnd, out owner);
+        var name = new StringBuilder(64);
+        GetClassName(hWnd, name, name.Capacity);
+        if (owner == processId && IsWindowVisible(hWnd) && name.ToString() == "CASCADIA_HOSTING_WINDOW_CLASS") found.Add(hWnd);
+        return true;
+    }, IntPtr.Zero);
+    return found;
+}
+'@
+
 $foreground = [CardsNative.Win32]::GetForegroundWindow()
 "previous=$foreground"
 if ($env:CARDS_QUERY) { exit 0 }
@@ -36,6 +59,21 @@ $titles = @(($env:CARDS_TITLE -split "`n") | Where-Object { $_ })
 function Test-TabTitle([string]$name) {
     foreach ($title in $titles) { if ($name.Contains($title)) { return $true } }
     return $false
+}
+
+$tabHit = $null
+# Claude Code prefixes the title with a spinner character, so match on containment.
+function Find-TerminalTab([System.Diagnostics.Process]$terminal) {
+    if (-not $titles -or $terminal.ProcessName -ne 'WindowsTerminal') { return $null }
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+    $isTab = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::TabItem)
+    foreach ($window in [CardsNative.Windows]::TerminalWindows($terminal.Id)) {
+        $root = [Windows.Automation.AutomationElement]::FromHandle($window)
+        foreach ($tab in $root.FindAll([Windows.Automation.TreeScope]::Descendants, $isTab)) {
+            if (Test-TabTitle $tab.Current.Name) { return [pscustomobject]@{ Window = $window; Tab = $tab } }
+        }
+    }
+    return $null
 }
 
 function Find-Window([int]$processId) {
@@ -90,34 +128,30 @@ if (-not $target -and $env:CARDS_TITLE) {
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
     $isTab = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::TabItem)
     foreach ($terminal in (Get-Process WindowsTerminal -ErrorAction SilentlyContinue)) {
-        if ($terminal.MainWindowHandle -eq [IntPtr]::Zero) { continue }
-        $root = [Windows.Automation.AutomationElement]::FromHandle($terminal.MainWindowHandle)
-        foreach ($tab in $root.FindAll([Windows.Automation.TreeScope]::Descendants, $isTab)) {
-            if (Test-TabTitle $tab.Current.Name) { $target = $terminal; $running = $true; break }
-        }
-        if ($target) { break }
+        $tabHit = Find-TerminalTab $terminal
+        if ($tabHit) { $target = $terminal; $running = $true; break }
     }
 }
 
-if ($target) { $hwnd = $target.MainWindowHandle }
+if ($target) {
+    if (-not $tabHit) { $tabHit = Find-TerminalTab $target }
+    # Use the window that holds the tab; otherwise fall back to the main window, which at least brings the terminal forward.
+    $hwnd = if ($tabHit) { $tabHit.Window } else { $target.MainWindowHandle }
+}
 if ($hwnd -eq [IntPtr]::Zero) { if ($running) { exit 4 } else { exit 2 } }
+
+if ($env:CARDS_DRY_RUN) {
+    "window=$hwnd tab=$(if ($tabHit) { $tabHit.Tab.Current.Name } else { '(none)' })"
+    exit 0
+}
 
 if ([CardsNative.Win32]::IsIconic($hwnd)) { [void][CardsNative.Win32]::ShowWindow($hwnd, 9) }
 
-if ($env:CARDS_TITLE -and $target -and $target.ProcessName -eq 'WindowsTerminal') {
+if ($tabHit) {
     try {
-        Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
-        $root = [Windows.Automation.AutomationElement]::FromHandle($hwnd)
-        $isTab = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::TabItem)
-        foreach ($tab in $root.FindAll([Windows.Automation.TreeScope]::Descendants, $isTab)) {
-            # Claude Code prefixes the title with a spinner character, so match on containment.
-            if (Test-TabTitle $tab.Current.Name) {
-                # Selecting a tab that is already selected moves keyboard focus onto the tab header.
-                $selection = $tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)
-                if (-not $selection.Current.IsSelected) { $selection.Select() }
-                break
-            }
-        }
+        # Selecting a tab that is already selected moves keyboard focus onto the tab header.
+        $selection = $tabHit.Tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)
+        if (-not $selection.Current.IsSelected) { $selection.Select() }
     } catch {
         # Tab selection is best effort: still bring the window forward.
     }
