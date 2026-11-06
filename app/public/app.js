@@ -335,44 +335,19 @@ function tokenText(value) {
   return String(value);
 }
 
-function resetText(at) {
-  if (!at) return '';
-  const date = new Date(at);
-  const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-  const time = date.toTimeString().slice(0, 5);
-  return date.toDateString() === new Date().toDateString() ? `今天 ${time}` : `${days[date.getDay()]} ${time}`;
-}
-
 function renderUsage() {
   const box = $('usage');
   const shown = appearance.usage;
-  const totalsTip = (name, t) => [
-    `${name}：${t.total.toLocaleString()}（输入 + 输出 + 写入缓存）`,
-    `输入 ${t.input.toLocaleString()}`,
-    `输出 ${t.output.toLocaleString()}`,
-    `写入缓存 ${t.cacheWrite.toLocaleString()}`,
-    `读取缓存 ${t.cacheRead.toLocaleString()}（不计入）`,
-    '只统计这台电脑上的记录',
-  ].join('\n');
-  const limitTip = (name, window) => [
-    `${name}已用 ${window.percent}%`,
-    window.resetsAt && `${resetText(window.resetsAt)} 重置`,
-    usageLimits?.updatedAt && `数据更新于 ${new Date(usageLimits.updatedAt).toLocaleTimeString()}`,
-  ].filter(Boolean).join('\n');
   const items = [];
-  if (shown.today && usageTotals) items.push([`今日 ${tokenText(usageTotals.today.total)}`, totalsTip('今日', usageTotals.today)]);
-  if (shown.week && usageTotals) items.push([`本周 ${tokenText(usageTotals.week.total)}`, totalsTip('本周（周一起）', usageTotals.week)]);
-  for (const [key, short, name] of [['fiveHour', '5h', '5 小时限额'], ['sevenDay', '7天', '7 天限额']]) {
+  if (shown.today && usageTotals) items.push([`今日 ${tokenText(usageTotals.today.total)}`]);
+  if (shown.week && usageTotals) items.push([`本周 ${tokenText(usageTotals.week.total)}`]);
+  for (const [key, short] of [['fiveHour', '5h'], ['sevenDay', '7天']]) {
     const window = usageLimits?.[key];
     if (!shown[key] || !window) continue;
     const level = window.percent >= 95 ? 'danger' : window.percent >= 80 ? 'warn' : '';
-    items.push([`${short} ${Math.round(window.percent)}%`, limitTip(name, window), level]);
+    items.push([`${short} ${Math.round(window.percent)}%`, level]);
   }
-  box.replaceChildren(...items.map(([text, tip, level]) => {
-    const node = el('span', level ?? '', text);
-    setTip(node, tip);
-    return node;
-  }));
+  box.replaceChildren(...items.map(([text, level]) => el('span', level ?? '', text)));
   box.hidden = items.length === 0;
   $('bar').classList.toggle('has-usage', items.length > 0);
   reportSize();
