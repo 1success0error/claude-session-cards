@@ -66,13 +66,6 @@ button { font: inherit; color: var(--muted); background: none; border: 0; border
 button:hover { color: var(--text); background: var(--tint); }
 button:focus-visible { outline: 2px solid var(--thinking); }
 #toggle { width: 24px; height: 22px; padding: 0; }
-#usage { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 0 10px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-/* 用量和按钮排在一行。展开时每张卡片都有状态，计数只在收起时另起一行显示 */
-#bar.has-usage #counts { flex: 1 0 100%; order: 9; }
-body:not(.collapsed) #bar.has-usage #counts { display: none; }
-#usage[hidden] { display: none; }
-#usage .warn { color: var(--waiting); font-weight: 600; }
-#usage .danger { color: var(--error); font-weight: 600; }
 #new { flex: none; width: 24px; height: 22px; padding: 0; font-size: 14px; line-height: 1; }
 #new[hidden] { display: none; }
 #history { flex: none; height: 22px; padding: 0 6px; font-size: 12px; }

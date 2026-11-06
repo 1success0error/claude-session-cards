@@ -98,28 +98,6 @@ test('确认提示和修改标题', async () => {
   assert.doesNotMatch(JSON.stringify(await sessions()), /"(chain|transcript|autoTitle)"/);
 });
 
-test('用量接口和状态栏脚本', async () => {
-  const script = join(env.CLAUDE_CONFIG_DIR, 'hooks', 'claude-session-cards-statusline.mjs');
-  const input = JSON.stringify({ model: { display_name: 'Opus' }, rate_limits: { five_hour: { used_percentage: 42.4, resets_at: Math.floor(Date.now() / 1000) + 3600 }, seven_day: { used_percentage: 18, resets_at: Math.floor(Date.now() / 1000) + 86400 } } });
-  const res = spawnSync(process.execPath, [script], { env, input, encoding: 'utf8' });
-  assert.equal(res.status, 0, res.stderr);
-  assert.equal(res.stdout, 'Opus · 5h 42% · 7天 18%');
-  await new Promise((r) => setTimeout(r, 150));
-  const data = await (await fetch(`${BASE}/api/sessions`)).json();
-  assert.equal(data.limits.fiveHour.percent, 42.4);
-  assert.equal(data.limits.sevenDay.percent, 18);
-  assert.equal(JSON.parse(readFileSync(join(env.CLAUDE_SESSION_CARDS_HOME, 'limits.json'), 'utf8')).sevenDay.percent, 18);
-  const evil = await fetch(`${BASE}/api/limits`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: '{}' });
-  assert.equal(evil.status, 403);
-});
-
-test('状态栏脚本在服务没开时也能显示', () => {
-  const script = join(env.CLAUDE_CONFIG_DIR, 'hooks', 'claude-session-cards-statusline.mjs');
-  const res = spawnSync(process.execPath, [script], { env: { ...env, CLAUDE_SESSION_CARDS_PORT: '47799' }, input: JSON.stringify({ model: { display_name: 'Opus' } }), encoding: 'utf8' });
-  assert.equal(res.status, 0);
-  assert.equal(res.stdout, 'Opus');
-});
-
 test('退出并卸载', async () => {
   assert.match(cli('stop'), /已退出/);
   await new Promise((r) => setTimeout(r, 300));

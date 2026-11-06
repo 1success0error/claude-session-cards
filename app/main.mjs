@@ -43,15 +43,12 @@ let offeredDirs = new Set();
 const recentlyOpened = new Map();
 let editingReturnTo = null;
 let pinned = true;
-let appearance = { theme: 'system', opacity: 'standard', size: 'standard', usage: { today: true, week: true, fiveHour: true, sevenDay: true } };
+let appearance = { theme: 'system', opacity: 'standard', size: 'standard' };
 let historyWin = null;
 
 /** 主题交给 nativeTheme：所有窗口的 prefers-color-scheme 都跟着变。 */
-function setAppearance({ theme, opacity, size, usage }) {
+function setAppearance({ theme, opacity, size }) {
   if (Object.hasOwn(SIZES, size)) appearance.size = size;
-  for (const key of Object.keys(appearance.usage)) {
-    if (typeof usage?.[key] === 'boolean') appearance.usage[key] = usage[key];
-  }
   if (THEMES.has(theme)) appearance.theme = theme;
   if (OPACITIES.has(opacity)) appearance.opacity = opacity;
   nativeTheme.themeSource = appearance.theme;
@@ -59,9 +56,9 @@ function setAppearance({ theme, opacity, size, usage }) {
 
 function loadPosition() {
   try {
-    const { x, y, pinned: savedPinned, theme, opacity, size, usage } = JSON.parse(readFileSync(WINDOW_FILE, 'utf8'));
+    const { x, y, pinned: savedPinned, theme, opacity, size } = JSON.parse(readFileSync(WINDOW_FILE, 'utf8'));
     if (typeof savedPinned === 'boolean') pinned = savedPinned;
-    setAppearance({ theme, opacity, size, usage });
+    setAppearance({ theme, opacity, size });
     if (Number.isInteger(x) && Number.isInteger(y)) {
       // 显示器可能已拔掉：位置不在任何屏幕内就回到默认
       const area = screen.getDisplayNearestPoint({ x, y }).workArea;

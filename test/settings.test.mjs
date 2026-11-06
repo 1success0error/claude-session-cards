@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -57,28 +57,23 @@ test('同一组里混有别人的 hook 时只删自己的', () => {
   assert.deepEqual(read(d).hooks.Stop[0].hooks.map((h) => h.command), ['echo other']);
 });
 
-test('配置状态栏；已有别的状态栏时不覆盖', () => {
+test('清掉旧版装的状态栏，保留用户自己的', () => {
   const d = dir();
-  assert.equal(install(d).statusLine, true);
-  assert.match(read(d).statusLine.command, /claude-session-cards-statusline\.mjs/);
-  assert.ok(existsSync(join(d, 'hooks', 'claude-session-cards-statusline.mjs')));
-  assert.equal(install(d).statusLine, true);
+  const ours = { type: 'command', command: 'node "C:/x/hooks/claude-session-cards-statusline.mjs"' };
+  writeFileSync(join(d, 'settings.json'), JSON.stringify({ statusLine: ours }));
+  mkdirSync(join(d, 'hooks'), { recursive: true });
+  writeFileSync(join(d, 'hooks', 'claude-session-cards-statusline.mjs'), '');
+  install(d);
+  assert.equal(read(d).statusLine, undefined);
+  assert.equal(existsSync(join(d, 'hooks', 'claude-session-cards-statusline.mjs')), false);
 
   const other = dir();
   const mine = { type: 'command', command: 'my-status' };
   writeFileSync(join(other, 'settings.json'), JSON.stringify({ statusLine: mine }));
-  assert.equal(install(other).statusLine, false);
+  install(other);
   assert.deepEqual(read(other).statusLine, mine);
   uninstall(other);
   assert.deepEqual(read(other).statusLine, mine);
-});
-
-test('卸载时移除自己的状态栏和脚本', () => {
-  const d = dir();
-  install(d);
-  uninstall(d);
-  assert.equal(read(d).statusLine, undefined);
-  assert.equal(existsSync(join(d, 'hooks', 'claude-session-cards-statusline.mjs')), false);
 });
 
 test('配置文件损坏时拒绝修改', () => {

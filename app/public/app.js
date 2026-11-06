@@ -15,8 +15,6 @@ let sessions = [];
 let clockOffset = 0;
 let hostPlatform = 'win32';
 let editingId = null;
-let usageTotals = null;
-let usageLimits = null;
 const cardNodes = new Map(); // 会话 ID -> { signature, node }
 
 if (host) document.documentElement.classList.add('overlay');
@@ -329,30 +327,6 @@ function render() {
   reportSize();
 }
 
-function tokenText(value) {
-  if (value >= 1e8) return `${(value / 1e8).toFixed(2)}亿`;
-  if (value >= 1e4) return `${Math.round(value / 1e4)}万`;
-  return String(value);
-}
-
-function renderUsage() {
-  const box = $('usage');
-  const shown = appearance.usage;
-  const items = [];
-  if (shown.today && usageTotals) items.push([`今日 ${tokenText(usageTotals.today.total)}`]);
-  if (shown.week && usageTotals) items.push([`本周 ${tokenText(usageTotals.week.total)}`]);
-  for (const [key, short] of [['fiveHour', '5h'], ['sevenDay', '7天']]) {
-    const window = usageLimits?.[key];
-    if (!shown[key] || !window) continue;
-    const level = window.percent >= 95 ? 'danger' : window.percent >= 80 ? 'warn' : '';
-    items.push([`${short} ${Math.round(window.percent)}%`, level]);
-  }
-  box.replaceChildren(...items.map(([text, level]) => el('span', level ?? '', text)));
-  box.hidden = items.length === 0;
-  $('bar').classList.toggle('has-usage', items.length > 0);
-  reportSize();
-}
-
 function setCollapsed(on) {
   document.body.classList.toggle('collapsed', on);
   try { localStorage.setItem('collapsed', on ? '1' : ''); } catch {}
@@ -373,9 +347,6 @@ function connect() {
     clockOffset = data.now - Date.now();
     hostPlatform = data.platform;
     sessions = data.sessions;
-    usageTotals = data.usage;
-    usageLimits = data.limits;
-    renderUsage();
     render();
   };
 }
@@ -471,17 +442,15 @@ function closeMenu() {
   reportSize();
 }
 
-const USAGE_ITEMS = [['today', '今日用量'], ['week', '本周用量'], ['fiveHour', '5 小时限额'], ['sevenDay', '7 天限额']];
 const SIZES = [['small', '小'], ['standard', '标准'], ['large', '大']];
 const SCALE = { small: 0.85, standard: 1, large: 1.2 };
 const THEMES = [['system', '跟随系统'], ['dark', '深色'], ['light', '浅色']];
 const OPACITIES = [['opaque', '不透明'], ['standard', '标准'], ['translucent', '较透明']];
-let appearance = { theme: 'system', opacity: 'standard', size: 'standard', usage: { today: true, week: true, fiveHour: true, sevenDay: true } };
+let appearance = { theme: 'system', opacity: 'standard', size: 'standard' };
 
 function applyAppearance(next) {
   appearance = next;
   document.documentElement.dataset.opacity = appearance.opacity;
-  renderUsage();
 }
 
 function renderMenu(entries, x, y) {
@@ -532,25 +501,6 @@ async function openMenu(e, items) {
       submenu('外观', THEMES, 'theme'),
       submenu('透明度', OPACITIES, 'opacity'),
       submenu('大小', SIZES, 'size'),
-      {
-        label: '用量显示 ▸',
-        stay: true,
-        action: function usageMenu() {
-          renderMenu([
-            { label: '‹ 返回', stay: true, action: main },
-            ...USAGE_ITEMS.map(([key, name], index) => ({
-              label: `${appearance.usage[key] ? '✓ ' : ''}${name}`,
-              stay: true,
-              separated: index === 0,
-              action: () => {
-                applyAppearance({ ...appearance, usage: { ...appearance.usage, [key]: !appearance.usage[key] } });
-                host.setAppearance(appearance);
-                usageMenu();
-              },
-            })),
-          ], x, y);
-        },
-      },
     ], x, y);
   };
   main();
