@@ -89,12 +89,14 @@ body.collapsed #cards { display: none; }
 
 /* 一轮结束的提示：点一下卡片才消失 */
 .card.done.attention, #bar.attention { --accent: var(--attention); }
-.card.attention, #bar.attention {
+#bar.waiting { --accent: var(--waiting); }
+/* 等你确认的卡片一直闪，直到会话继续；完成提示点一下才消失 */
+.card.attention, .card.waiting, #bar.attention, #bar.waiting {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, var(--card));
   animation: attention 1.2s ease-in-out infinite;
 }
-.card.attention .status { font-weight: 700; }
+.card.attention .status, .card.waiting .status { font-weight: 700; }
 @keyframes attention {
   50% { box-shadow: inset 0 0 0 2px var(--accent); background: color-mix(in srgb, var(--accent) 34%, var(--card)); }
 }
@@ -110,7 +112,7 @@ body.collapsed #cards { display: none; }
 @keyframes pulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) {
   .dot { animation: none !important; }
-  .card.attention, #bar.attention { animation: none; box-shadow: inset 0 0 0 2px var(--accent); }
+  .card.attention, .card.waiting, #bar.attention, #bar.waiting { animation: none; box-shadow: inset 0 0 0 2px var(--accent); }
 }
 
 .line { margin-top: 2px; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }

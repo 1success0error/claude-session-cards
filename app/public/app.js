@@ -271,6 +271,7 @@ cardsEl.addEventListener('dblclick', (e) => {
 function updateBarAttention() {
   const collapsed = document.body.classList.contains('collapsed');
   $('bar').classList.toggle('attention', collapsed && sessions.some((s) => s.attention));
+  $('bar').classList.toggle('waiting', collapsed && sessions.some((s) => viewState(s) === 'waiting'));
 }
 
 /** 只更新变化的卡片：整体重建会打断进行中的点击、悬停和标题编辑。 */
