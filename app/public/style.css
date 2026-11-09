@@ -2,8 +2,8 @@
   color-scheme: dark light;
   --bg: #17181c;
   --card-rgb: 30 32 38;
-  --card-alpha: 0.94;
-  --translucent-alpha: 0.82;
+  --card-alpha: 0.82;
+  --translucent-alpha: 0.68;
   --card: rgb(var(--card-rgb) / var(--card-alpha));
   --menu-bg: #24262c;
   --notice-bg: rgba(23, 24, 28, 0.94);
@@ -25,8 +25,8 @@
   :root {
     --bg: #f3f4f6;
     --card-rgb: 255 255 255;
-    --card-alpha: 0.96;
-    --translucent-alpha: 0.84;
+    --card-alpha: 0.84;
+    --translucent-alpha: 0.7;
     --menu-bg: #ffffff;
     --notice-bg: rgba(255, 255, 255, 0.96);
     --line: rgba(0, 0, 0, 0.16);

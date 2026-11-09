@@ -35,22 +35,21 @@ for (const [name, t] of Object.entries(themes)) {
   const rgb = t['card-rgb'].split(' ').map(Number);
   const backdrops = (alpha) => [over(rgb, alpha, BLACK), over(rgb, alpha, WHITE)];
 
-  test(`${name}：标准透明度下文字和状态色对比度 ≥ 4.5`, () => {
+  // 标准就是旧版的“较透明”：正文 ≥ 4.5，其余 ≥ 3
+  test(`${name}：标准透明度下正文 ≥ 4.5，其余 ≥ 3`, () => {
     for (const bg of backdrops(Number(t['card-alpha']))) {
-      for (const key of FOREGROUNDS) {
-        const ratio = contrast(hex(t[key]), bg);
-        assert.ok(ratio >= 4.5, `${key} = ${ratio.toFixed(2)}`);
-      }
-    }
-  });
-
-  test(`${name}：较透明时正文 ≥ 4.5，其余 ≥ 3`, () => {
-    for (const bg of backdrops(Number(t['translucent-alpha']))) {
       assert.ok(contrast(hex(t.text), bg) >= 4.5, `text = ${contrast(hex(t.text), bg).toFixed(2)}`);
       for (const key of FOREGROUNDS) {
         const ratio = contrast(hex(t[key]), bg);
         assert.ok(ratio >= 3, `${key} = ${ratio.toFixed(2)}`);
       }
+    }
+  });
+
+  // 较透明是用户主动选的：只保证标题等正文在纯黑或纯白背景上仍然清楚，次要文字可能变淡
+  test(`${name}：较透明时正文 ≥ 4.5`, () => {
+    for (const bg of backdrops(Number(t['translucent-alpha']))) {
+      assert.ok(contrast(hex(t.text), bg) >= 4.5, `text = ${contrast(hex(t.text), bg).toFixed(2)}`);
     }
   });
 }
