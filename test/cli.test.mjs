@@ -1,6 +1,7 @@
 // 端到端：临时配置目录 + 独立端口，走网页模式，不碰真实配置，也不开窗口。
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { request } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,6 +75,14 @@ test('历史接口读取配置目录里的会话', async () => {
   assert.equal(rows[0].prompt, '历史提示词');
   assert.equal(rows[0].active, false);
   assert.equal((await fetch(`${BASE}/history.html`)).status, 200);
+
+  const { matches } = await (await fetch(`${BASE}/api/history/search?q=${encodeURIComponent('提示')}`)).json();
+  assert.deepEqual(matches, [{ id, count: 1, snippets: [{ role: 'user', text: '历史提示词' }] }]);
+  // fetch 不允许改 Host，用 http.request 模拟 DNS rebinding
+  const status = await new Promise((resolve, reject) => {
+    request({ host: '127.0.0.1', port: PORT, path: '/api/history/search?q=x', headers: { Host: 'evil.example' } }, (res) => resolve(res.statusCode)).on('error', reject).end();
+  });
+  assert.equal(status, 403);
 });
 
 test('确认提示和修改标题', async () => {

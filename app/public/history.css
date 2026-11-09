@@ -54,6 +54,12 @@ button:hover, select:hover { background: var(--hover); }
 .badge { flex: none; color: var(--working); font-size: 12px; font-weight: 400; }
 .prompt, .meta { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .prompt { margin-top: 2px; color: var(--muted); font-size: 13px; }
+.snippet { margin-top: 3px; color: var(--muted); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.snippet .who { margin-right: 6px; font-size: 12px; font-weight: 600; }
+.snippet .who.user { color: var(--accent); }
+.snippet .who.assistant { color: var(--working); }
+.snippet mark { color: var(--text); background: color-mix(in srgb, var(--accent) 30%, transparent); border-radius: 2px; }
+.more { margin-top: 2px; color: var(--muted); font-size: 12px; }
 .meta { margin-top: 3px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 #menu { position: fixed; z-index: 10; display: flex; flex-direction: column; min-width: 150px; padding: 4px; background: var(--menu-bg); border: 1px solid var(--line); border-radius: 8px; }

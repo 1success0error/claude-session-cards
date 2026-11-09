@@ -6,6 +6,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const $ = (id) => document.getElementById(id);
 let rows = [];
 let platform = 'win32';
+// 对话内容的搜索结果：只对 forQuery 这个搜索词有效
+let content = { forQuery: '', matches: new Map() };
+let searching = '';
+let searchTimer = null;
+let searchSeq = 0;
+
+const termsOf = (query) => [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))];
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -107,6 +114,11 @@ function buildRow(s, now) {
   if (s.active) title.append(el('span', 'badge', '运行中'));
   row.append(title);
   if (s.title && s.prompt) row.append(el('div', 'prompt', s.prompt));
+  const hit = content.forQuery === currentQuery() ? content.matches.get(s.id) : null;
+  if (hit) {
+    for (const snippet of hit.snippets) row.append(snippetLine(snippet));
+    if (hit.count > hit.snippets.length) row.append(el('div', 'more', `共 ${hit.count} 条消息提到`));
+  }
   row.append(el('div', 'meta', [s.cwd ?? '未知目录', ago(now - s.mtime), sizeText(s.size)].join(' · ')));
 
   row.addEventListener('click', () => resume(s));
@@ -114,13 +126,42 @@ function buildRow(s, now) {
   return row;
 }
 
+const currentQuery = () => $('search').value.trim();
+
+/** 关键词用 mark 标出；全部走 textContent，不拼 HTML。 */
+function snippetLine({ role, text }) {
+  const line = el('div', 'snippet');
+  line.append(el('span', `who ${role}`, role === 'user' ? '你' : 'Claude'));
+  const terms = termsOf(currentQuery());
+  const lower = text.toLowerCase();
+  let i = 0;
+  while (i < text.length) {
+    let best = null;
+    for (const t of terms) {
+      const at = lower.indexOf(t, i);
+      if (at >= 0 && (!best || at < best.at || (at === best.at && t.length > best.len))) best = { at, len: t.length };
+    }
+    if (!best) {
+      line.append(text.slice(i));
+      break;
+    }
+    if (best.at > i) line.append(text.slice(i, best.at));
+    line.append(el('mark', '', text.slice(best.at, best.at + best.len)));
+    i = best.at + best.len;
+  }
+  return line;
+}
+
 function render() {
-  const query = $('search').value.trim().toLowerCase();
+  const query = currentQuery();
+  const terms = termsOf(query);
   const project = $('project').value;
+  const matches = query && content.forQuery === query ? content.matches : null;
   const shown = rows.filter((s) => {
     if (project && s.project !== project) return false;
-    if (!query) return true;
-    return [s.title, s.prompt, s.cwd, s.id].some((v) => v?.toLowerCase().includes(query));
+    if (!terms.length) return true;
+    const fields = [s.title, s.prompt, s.cwd, s.id].filter(Boolean).join('\n').toLowerCase();
+    return terms.every((t) => fields.includes(t)) || Boolean(matches?.has(s.id));
   });
 
   const now = Date.now();
@@ -136,9 +177,43 @@ function render() {
     }
     nodes.push(buildRow(s, now));
   }
-  if (!nodes.length) nodes.push(el('div', 'empty', rows.length ? '没有符合条件的会话' : '还没有历史会话'));
+  const pending = searching && searching === query;
+  if (!nodes.length) nodes.push(el('div', 'empty', !rows.length ? '还没有历史会话' : pending ? '正在搜索对话内容…' : '没有符合条件的会话'));
   $('list').replaceChildren(...nodes);
-  setSummary(shown.length === rows.length ? `共 ${rows.length} 个会话` : `显示 ${shown.length} / ${rows.length} 个会话`);
+  let text = shown.length === rows.length ? `共 ${rows.length} 个会话` : `显示 ${shown.length} / ${rows.length} 个会话`;
+  if (pending) text += '，正在搜索对话内容…';
+  else if (matches) text += `，其中 ${matches.size} 个会话的对话内容匹配`;
+  setSummary(text);
+}
+
+/** 停顿一下再查对话内容，标题和路径的匹配先即时显示。 */
+function scheduleSearch() {
+  clearTimeout(searchTimer);
+  const query = currentQuery();
+  if (!query) {
+    searching = '';
+    return;
+  }
+  if (content.forQuery === query) return;
+  searching = query;
+  searchTimer = setTimeout(() => searchContent(query), 300);
+}
+
+async function searchContent(query) {
+  const seq = ++searchSeq;
+  searching = query;
+  try {
+    const res = await fetch(`/api/history/search?q=${encodeURIComponent(query)}`);
+    if (!res.ok) throw new Error(String(res.status));
+    const { matches } = await res.json();
+    if (seq !== searchSeq) return; // 已经有更新的搜索
+    content = { forQuery: query, matches: new Map(matches.map((m) => [m.id, m])) };
+  } catch {
+    if (seq !== searchSeq) return;
+    content = { forQuery: '', matches: new Map() };
+  }
+  searching = '';
+  if (currentQuery() === query) render();
 }
 
 function fillProjects() {
@@ -164,12 +239,17 @@ async function load() {
     platform = data.platform;
     fillProjects();
     render();
+    // 会话可能有新内容，重新查一次对话
+    if (currentQuery()) searchContent(currentQuery());
   } catch {
     setSummary('读取历史失败。历史会话只能在运行本工具的电脑上查看。', true);
   }
 }
 
-$('search').addEventListener('input', render);
+$('search').addEventListener('input', () => {
+  scheduleSearch();
+  render();
+});
 $('project').addEventListener('change', render);
 $('refresh').addEventListener('click', load);
 document.addEventListener('pointerdown', (e) => {
