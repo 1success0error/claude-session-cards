@@ -33,3 +33,11 @@ test('脚本只能含 ASCII：Windows PowerShell 5 按 GBK 读无 BOM 的脚本�
   const code = readFileSync(new URL('../app/focus-window.ps1', import.meta.url), 'utf8');
   assert.equal([...code].filter((c) => c.charCodeAt(0) > 127).join(''), '');
 });
+
+test('没有标题的会话用控制台标题临时标记标签，并且一定恢复原标题', () => {
+  const code = readFileSync(new URL('../app/focus-window.ps1', import.meta.url), 'utf8');
+  assert.match(code, /AttachConsole\(\$consoleProcess\)/);
+  assert.match(code, /\} finally \{\s+\[void\]\[CardsNative\.Console\]::SetConsoleTitle\(\$old\.ToString\(\)\)/);
+  // 多个标签标题相同时按标题匹配不可靠，要交给控制台标记
+  assert.match(code, /if \(\$hits\.Count -eq 1\) \{ return \$hits\[0\] \}/);
+});

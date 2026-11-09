@@ -206,8 +206,12 @@ function focusSession(id, titles) {
     CARDS_TITLE: titles.join('\n'),
     CARDS_SESSION: SESSION_ID_RE.test(id) ? id : '',
   };
+  const started = Date.now();
   return new Promise((resolve) => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(HERE, 'focus-window.ps1')], { env, timeout: 15_000, windowsHide: true }, (err) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(HERE, 'focus-window.ps1')], { env, timeout: 15_000, windowsHide: true }, (err, stdout) => {
+      // 只记方式和耗时，不记标题，排查跳转失败用
+      const steps = String(stdout).split(/\r?\n/).filter((line) => /^(method|terminal-focus|tab-by)=/.test(line));
+      console.log(`[focus] ${id.slice(0, 8)} exit=${err ? err.code : 0} ${steps.join(' ')} ${Date.now() - started}ms`);
       if (!err) resolve('focused');
       else if (err.code === 3) resolve('refused');
       else if (err.code === 4) resolve('running');
@@ -277,11 +281,23 @@ async function openSession(id) {
   return 'opened';
 }
 
+/**
+ * 卡片窗口不抢焦点，Windows 因此常常不让本程序把别的窗口切到前台：新窗口会开在其他窗口后面，
+ * 看起来像没反应。先临时置顶保证看得见，再用切换脚本拿到焦点。
+ */
+function bringToFront(target) {
+  if (target.isMinimized()) target.restore();
+  target.setAlwaysOnTop(true);
+  target.show();
+  target.focus();
+  target.setAlwaysOnTop(false);
+  target.moveTop();
+  if (process.platform === 'win32' && !target.isFocused()) runFocusScript({ CARDS_HWND: hwndOf(target) });
+}
+
 function openHistoryWindow() {
   if (historyWin) {
-    if (historyWin.isMinimized()) historyWin.restore();
-    historyWin.show();
-    historyWin.focus();
+    bringToFront(historyWin);
     return;
   }
   // 打开时跟随卡片当前所在的位置和显示器；已打开的窗口保留用户摆放的位置
@@ -299,6 +315,7 @@ function openHistoryWindow() {
   historyWin.webContents.on('will-navigate', (e) => e.preventDefault());
   historyWin.on('closed', () => { historyWin = null; });
   historyWin.loadURL(`http://127.0.0.1:${server.port}/history.html`);
+  bringToFront(historyWin);
 }
 
 const loginOptions = () => ({ path: process.execPath, args: [app.getAppPath()], name: AUTOSTART_NAME });

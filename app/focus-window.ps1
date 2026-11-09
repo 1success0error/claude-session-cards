@@ -46,6 +46,15 @@ public static List<IntPtr> TerminalWindows(int processId) {
 }
 '@
 
+# A session that has no title shows as a generic "Claude Code" tab, and several such tabs look
+# the same. The console title is the tab title, so the session's own console can mark its tab.
+Add-Type -Namespace CardsNative -Name Console -UsingNamespace System.Text -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern bool FreeConsole();
+[DllImport("kernel32.dll")] public static extern bool AttachConsole(int processId);
+[DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern int GetConsoleTitle(StringBuilder title, int size);
+[DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern bool SetConsoleTitle(string title);
+'@
+
 $foreground = [CardsNative.Win32]::GetForegroundWindow()
 "previous=$foreground"
 if ($env:CARDS_QUERY) { exit 0 }
@@ -62,18 +71,49 @@ function Test-TabTitle([string]$name) {
 }
 
 $tabHit = $null
-# Claude Code prefixes the title with a spinner character, so match on containment.
-function Find-TerminalTab([System.Diagnostics.Process]$terminal) {
-    if (-not $titles -or $terminal.ProcessName -ne 'WindowsTerminal') { return $null }
+$consoleProcess = 0  # a live process of the session, attached to the console of its tab
+
+function Get-TerminalTabs([System.Diagnostics.Process]$terminal) {
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
     $isTab = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::TabItem)
     foreach ($window in [CardsNative.Windows]::TerminalWindows($terminal.Id)) {
         $root = [Windows.Automation.AutomationElement]::FromHandle($window)
         foreach ($tab in $root.FindAll([Windows.Automation.TreeScope]::Descendants, $isTab)) {
-            if (Test-TabTitle $tab.Current.Name) { return [pscustomobject]@{ Window = $window; Tab = $tab } }
+            [pscustomobject]@{ Window = $window; Tab = $tab }
         }
     }
+}
+
+# Claude Code prefixes the title with a spinner character, so match on containment.
+# Several tabs with the same title are ambiguous, so only a single match counts.
+function Find-TerminalTab([System.Diagnostics.Process]$terminal) {
+    if (-not $titles -or $terminal.ProcessName -ne 'WindowsTerminal') { return $null }
+    $hits = @(Get-TerminalTabs $terminal | Where-Object { Test-TabTitle $_.Tab.Current.Name })
+    if ($hits.Count -eq 1) { return $hits[0] }
     return $null
+}
+
+# Give the session's console a unique title for a moment, find the tab that shows it, then put
+# the old title back. Claude Code also rewrites the title itself whenever its state changes.
+function Find-TabByConsole([System.Diagnostics.Process]$terminal) {
+    if (-not $consoleProcess -or $terminal.ProcessName -ne 'WindowsTerminal') { return $null }
+    [void][CardsNative.Console]::FreeConsole()
+    if (-not [CardsNative.Console]::AttachConsole($consoleProcess)) { return $null }
+    $old = New-Object System.Text.StringBuilder 1024
+    [void][CardsNative.Console]::GetConsoleTitle($old, $old.Capacity)
+    $marker = 'claude-session-cards-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $hit = $null
+    try {
+        [void][CardsNative.Console]::SetConsoleTitle($marker)
+        for ($i = 0; $i -lt 20 -and -not $hit; $i++) {
+            Start-Sleep -Milliseconds 25
+            $hit = Get-TerminalTabs $terminal | Where-Object { $_.Tab.Current.Name.Contains($marker) } | Select-Object -First 1
+        }
+    } finally {
+        [void][CardsNative.Console]::SetConsoleTitle($old.ToString())
+        [void][CardsNative.Console]::FreeConsole()
+    }
+    return $hit
 }
 
 function Find-Window([int]$processId) {
@@ -97,7 +137,7 @@ foreach ($pair in ($env:CARDS_CHAIN -split ',')) {
 }
 $agent = $chain | Where-Object { $_.Name -match '^(claude|node)' } | Select-Object -First 1
 if (-not $agent -or $agent.Alive) {
-    if ($agent) { $running = $true }
+    if ($agent) { $running = $true; $consoleProcess = $agent.Id }
     foreach ($item in $chain) {
         if ($item.Alive) {
             $target = Find-Window $item.Id
@@ -113,6 +153,7 @@ if (-not $target -and $env:CARDS_SESSION) {
     foreach ($item in $table.Values) {
         if ($item.ProcessId -ne $PID -and $item.CommandLine -like "*--resume $env:CARDS_SESSION*") {
             $running = $true
+            $consoleProcess = [int]$item.ProcessId
             $current = [int]$item.ProcessId
             for ($depth = 0; $depth -lt 16 -and -not $target -and $table.ContainsKey($current); $depth++) {
                 $target = Find-Window $current
@@ -134,7 +175,11 @@ if (-not $target -and $env:CARDS_TITLE) {
 }
 
 if ($target) {
+    $tabBy = 'title'
     if (-not $tabHit) { $tabHit = Find-TerminalTab $target }
+    if (-not $tabHit) { $tabHit = Find-TabByConsole $target; $tabBy = 'console' }
+    if (-not $tabHit) { $tabBy = 'none' }
+    "tab-by=$tabBy"
     # Use the window that holds the tab; otherwise fall back to the main window, which at least brings the terminal forward.
     $hwnd = if ($tabHit) { $tabHit.Window } else { $target.MainWindowHandle }
 }
