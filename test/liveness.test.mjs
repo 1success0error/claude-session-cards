@@ -75,3 +75,15 @@ test('前台检测脚本只含 ASCII，并且只读窗口标题', () => {
   assert.equal([...code].filter((c) => c.charCodeAt(0) > 127).join(''), '');
   assert.doesNotMatch(code, /keybd_event|SendInput|SendKeys|SetForegroundWindow|SetConsoleTitle/i);
 });
+
+test('快速检查：只看 pid 在不在，无权访问也算在', async () => {
+  const { pidsAlive } = await import('../lib/server.mjs');
+  const m = new Map([...withChain(1, 100), ...withChain(2, 200), ...withChain(3, 300)]);
+  const probe = (pid) => {
+    if (pid === 200) throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+    if (pid === 300) throw Object.assign(new Error('denied'), { code: 'EPERM' });
+  };
+  assert.deepEqual([...pidsAlive(m, probe)], [[100, 'claude.exe'], [300, 'claude.exe']]);
+  checkLiveness(m, pidsAlive(m, probe));
+  assert.deepEqual([...m.keys()], [ID(1), ID(3)]);
+});
