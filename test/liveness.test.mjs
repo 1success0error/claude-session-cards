@@ -1,7 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { sessionInTab } from '../lib/foreground.mjs';
 import { applyEvent, checkLiveness, pruneSessions } from '../lib/server.mjs';
 
 const ID = (n) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
@@ -49,31 +47,6 @@ test('恢复会话后旧进程链作废，存活状态重新判断', () => {
   assert.equal(m.get(ID(1)).alive, null);
   checkLiveness(m, new Map());
   assert.ok(m.has(ID(1)));
-});
-
-const tabSessions = [
-  { id: 'a', chain: chain(1, 900), titles: ['部署脚本'] },
-  { id: 'b', chain: chain(2, 900), titles: ['部署'] },
-  { id: 'c', chain: chain(3, 901), titles: ['订单接口'] },
-  { id: 'd', chain: null, titles: [] },
-];
-
-test('按标签标题找到会话，互相包含时取最长的', () => {
-  assert.equal(sessionInTab(tabSessions, { pid: 900, title: '✳ 部署脚本' }), 'a');
-  assert.equal(sessionInTab(tabSessions, { pid: 900, title: '✳ 部署' }), 'b');
-});
-
-test('终端进程对不上、没有标题或分不出时不确认', () => {
-  assert.equal(sessionInTab(tabSessions, { pid: 900, title: '✳ 订单接口' }), null);
-  assert.equal(sessionInTab(tabSessions, { pid: 900, title: '✳ Claude Code' }), null);
-  assert.equal(sessionInTab([{ id: 'x', chain: null, titles: ['同名'] }, { id: 'y', chain: null, titles: ['同名'] }], { pid: 1, title: '同名' }), null);
-  assert.equal(sessionInTab(tabSessions, null), null);
-});
-
-test('前台检测脚本只含 ASCII，并且只读窗口标题', () => {
-  const code = readFileSync(new URL('../app/watch-foreground.ps1', import.meta.url), 'utf8');
-  assert.equal([...code].filter((c) => c.charCodeAt(0) > 127).join(''), '');
-  assert.doesNotMatch(code, /keybd_event|SendInput|SendKeys|SetForegroundWindow|SetConsoleTitle/i);
 });
 
 test('快速检查：只看 pid 在不在，无权访问也算在', async () => {

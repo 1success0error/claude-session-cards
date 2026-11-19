@@ -4,10 +4,8 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nati
 import { execFile, spawn } from 'node:child_process';
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { removeSessionVariables } from '../lib/env.mjs';
-import { sessionInTab } from '../lib/foreground.mjs';
 import { scanHistory, SESSION_ID_RE } from '../lib/history.mjs';
 import { claudeDir, dataDir } from '../lib/paths.mjs';
 import { placeBeside } from '../lib/placement.mjs';
@@ -39,9 +37,6 @@ let win = null;
 let tray = null;
 let server = null;
 let dragOrigin = null;
-let foregroundTab = null; // 前台的 Windows Terminal 窗口：{ pid, title }
-let quitting = false;
-let ackTimer = null;
 let menuShift = null;
 let contentHeight = 40;
 let offeredDirs = new Set();
@@ -363,36 +358,6 @@ function watchPointer() {
   }, POINTER_POLL_MS);
 }
 
-/** 用户已经切到会话所在的标签，完成提示就不用再闪了。 */
-function ackForegroundSession() {
-  if (!server || !foregroundTab) return;
-  const list = server.listSessions();
-  if (!list.some((s) => s.attention)) return;
-  const id = sessionInTab(list, foregroundTab);
-  if (id) server.ack(id);
-}
-
-/** 常驻一个 PowerShell，前台窗口或标签标题变化时报一行。只支持 Windows Terminal。 */
-function watchForeground() {
-  if (process.platform !== 'win32' || quitting) return;
-  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(HERE, 'watch-foreground.ps1')], {
-    env: { ...process.env, CARDS_PARENT: String(process.pid) },
-    stdio: ['ignore', 'pipe', 'ignore'],
-    windowsHide: true,
-  });
-  createInterface({ input: child.stdout }).on('line', (line) => {
-    const [hwnd, pid, title = ''] = line.split('\t');
-    foregroundTab = hwnd && hwnd !== '0' ? { pid: Number(pid), title: Buffer.from(title, 'base64').toString('utf8') } : null;
-    ackForegroundSession();
-  });
-  child.on('error', () => {});
-  child.on('exit', () => {
-    foregroundTab = null;
-    if (!quitting) setTimeout(watchForeground, 10_000).unref(); // 意外退出就过一会儿重启
-  });
-  app.once('before-quit', () => child.kill());
-}
-
 function setupIpc() {
   const fromOurWindow = (e) => win && e.sender === win.webContents;
   const fromHistory = (e) => historyWin && e.sender === historyWin.webContents;
@@ -494,21 +459,11 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.dock?.hide();
   app.whenReady().then(async () => {
-    server = startServer({
-      onShutdown: () => app.quit(),
-      // 会话刚完成时，如果用户正看着它的标签，就不必闪
-      onChange: () => {
-        ackTimer ??= setTimeout(() => {
-          ackTimer = null;
-          ackForegroundSession();
-        }, 200);
-      },
-    });
+    server = startServer({ onShutdown: () => app.quit() });
     await server.ready;
     setupIpc();
     createWindow();
     watchPointer();
-    watchForeground();
     tray = new Tray(buildTrayImage(nativeImage));
     tray.setToolTip('Claude 会话卡片');
     updateTray();
@@ -518,7 +473,6 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on('window-all-closed', (e) => e.preventDefault());
   app.on('before-quit', () => {
-    quitting = true;
     savePosition();
     server?.close();
   });
