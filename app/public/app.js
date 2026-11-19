@@ -50,7 +50,8 @@ const rank = ({ s, state }) => (state === 'done' && s.attention ? 1.5 : ORDER.in
 function visible() {
   return sessions
     .map((s) => ({ s, state: viewState(s) }))
-    .filter(({ s, state }) => s.attention || !((state === 'done' || state === 'idle') && now() - s.updatedAt > DONE_VISIBLE_MS))
+    // 进程还在的会话一直显示：终端还开着，只是很久没说话
+    .filter(({ s, state }) => s.alive || s.attention || !((state === 'done' || state === 'idle') && now() - s.updatedAt > DONE_VISIBLE_MS))
     .sort((a, b) => rank(a) - rank(b) || b.s.updatedAt - a.s.updatedAt);
 }
 
